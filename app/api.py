@@ -303,6 +303,7 @@ def _merge_unique_results(target: list, seen: set, incoming: list):
         target.append(item)
 
 @app.route('/search')
+@app.route('/api/search')
 def search():
     """Search for songs on Cifra Club"""
     query = request.args.get('q', '').strip()
