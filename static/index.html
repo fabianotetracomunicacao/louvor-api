@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cifra Club - Lista de Louvores</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🎸 Lista de Louvores</h1>
+            <p class="subtitle">Busque e organize suas cifras do Cifra Club</p>
+        </header>
+
+        <!-- Barra de Busca -->
+        <div class="search-section">
+            <div class="search-container">
+                <input type="text" id="searchInput" placeholder="Digite o nome da música ou artista..." autocomplete="off">
+                <button id="searchBtn" onclick="searchSongs()">🔍 Buscar</button>
+            </div>
+            <div id="searchResults" class="search-results"></div>
+            <div id="searchPagination" class="search-pagination"></div>
+        </div>
+
+        <!-- Lista de Louvores Salvas -->
+        <div class="saved-songs-section">
+            <h2>📋 Meus Louvores</h2>
+            <div id="savedSongsList" class="saved-songs-list">
+                <p class="empty-message">Nenhum louvor salvo ainda. Busque uma música acima para começar!</p>
+            </div>
+        </div>
+
+        <!-- Visualização da Cifra -->
+        <div id="cifraModal" class="modal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <div>
+                        <h2 id="cifraTitle"></h2>
+                        <p id="cifraArtist"></p>
+                    </div>
+                    <div class="modal-actions">
+                        <button id="transposeDown" onclick="transpose(-1)" title="Transpor meio tom abaixo">- Tom</button>
+                        <button id="transposeUp" onclick="transpose(1)" title="Transpor meio tom acima">+ Tom</button>
+                        <button id="saveBtn" onclick="saveSong()">💾 Salvar</button>
+                        <button onclick="closeModal()">✕ Fechar</button>
+                    </div>
+                </div>
+                <div id="cifraContent" class="cifra-content"></div>
+            </div>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
