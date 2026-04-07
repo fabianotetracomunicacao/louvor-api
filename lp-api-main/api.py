@@ -38,7 +38,7 @@ DEFAULT_HEADERS = {
 }
 
 # Gospel genre keywords for matching
-GOSPEL_KEYWORDS = {"gospel", "religioso", "gospel/religioso", "crist\u00e3", "cristao", "worship"}
+GOSPEL_KEYWORDS = {"gospel", "religioso", "gospel/religioso", "cristã", "cristao", "worship"}
 
 # Cache: artist_slug -> (is_gospel: bool, timestamp)
 _artist_genre_cache = {}
@@ -53,20 +53,35 @@ def _is_gospel_artist(artist_slug: str) -> bool:
 
     try:
         url = f"{CIFRACLUB_BASE_URL}/{artist_slug}/"
-        resp = requests.get(url, headers=DEFAULT_HEADERS, timeout=8)
-        resp.raise_for_status()
-        soup = BeautifulSoup(resp.text, "html.parser")
+        # Crucial: Prevent redirects to block anti-bot fallback pages serving global headers
+        resp = requests.get(url, headers=DEFAULT_HEADERS, timeout=8, allow_redirects=False)
+        
+        if resp.status_code != 200:
+            _artist_genre_cache[artist_slug] = (False, now)
+            return False
 
-        genre_link = soup.select_one('a[href*="/estilos/"]')
+        soup = BeautifulSoup(resp.text, "html.parser")
+        is_gospel = False
+
+        # Strictly check for the explicit artist genre tag, avoiding global navigation
+        genre_link = None
+        
+        # 1. Look for the exact breadcrumb/secondary tag format
+        for link in soup.select('a[href*="/estilos/"]'):
+            href = (link.get("href") or "").lower()
+            if href == "/estilos/": continue # Skip the generic "Estilos musicais" button
+            
+            # The top breadcrumb of the artist usually is directly pointing to their primary genre.
+            genre_link = link
+            break
+            
         if genre_link:
             genre_text = genre_link.get_text(strip=True).lower()
             genre_href = (genre_link.get("href") or "").lower()
-            is_gospel = any(kw in genre_text or kw in genre_href for kw in GOSPEL_KEYWORDS)
-        else:
-            is_gospel = False
+            if any(kw in genre_text or kw in genre_href for kw in GOSPEL_KEYWORDS):
+                is_gospel = True
 
         _artist_genre_cache[artist_slug] = (is_gospel, now)
-        logger.info(f"Genre check: {artist_slug} -> {'GOSPEL' if is_gospel else genre_link.get_text(strip=True) if genre_link else 'unknown'}")
         return is_gospel
     except Exception as e:
         logger.warning(f"Genre check failed for {artist_slug}: {e}")
@@ -87,7 +102,7 @@ def _filter_gospel_results(results: list) -> list:
 app = Flask(__name__, static_folder='static', static_url_path='')
 CORS(app) # Enable CORS for all routes
 
-# Rota para servir a p\u00e1gina principal
+# Rota para servir a página principal
 @app.route('/')
 def home():
     """Home route - serves the main HTML page"""
@@ -108,7 +123,7 @@ def _normalize_search_text(value: str) -> str:
     return re.sub(r"\s+", " ", normalized).strip()
 
 def _build_query_variants(query: str):
-    """Gera varia\u00e7\u00f5es de consulta para cobrir formatos como artista-m\u00fasica."""
+    """Gera variações de consulta para cobrir formatos como artista-música."""
     normalized = re.sub(r"\s+", " ", query).strip()
     variants = []
 
@@ -132,7 +147,7 @@ def _build_query_variants(query: str):
     return variants
 
 def _search_from_solr(query: str, limit: int | None = None):
-    """Busca m\u00fasicas usando o endpoint de sugest\u00f5es do Cifra Club."""
+    """Busca músicas usando o endpoint de sugestões do Cifra Club."""
     response = requests.get(
         CIFRACLUB_SOLR_SUGGEST_URL,
         params={"q": query},
@@ -152,7 +167,7 @@ def _search_from_solr(query: str, limit: int | None = None):
     seen = set()
 
     for doc in docs:
-        # t=2 representa item de m\u00fasica
+        # t=2 representa item de música
         if str(doc.get("t")) != "2":
             continue
 
@@ -180,7 +195,7 @@ def _search_from_solr(query: str, limit: int | None = None):
     return results
 
 def _search_from_solr_alt(query: str, limit: int | None = None):
-    """Busca m\u00fasicas usando endpoint alternativo de sugest\u00e3o."""
+    """Busca músicas usando endpoint alternativo de sugestão."""
     response = requests.get(
         CIFRACLUB_SOLR_ALT_SUGGEST_URL,
         params={"q": query},
@@ -223,7 +238,7 @@ def _search_from_solr_alt(query: str, limit: int | None = None):
     return results
 
 def _search_from_artist_catalog(query: str, limit: int | None = None):
-    """Busca cat\u00e1logo do artista quando a query representa claramente um artista."""
+    """Busca catálogo do artista quando a query representa claramente um artista."""
     response = requests.get(
         CIFRACLUB_ARTISTS_SUGGEST_URL,
         params={"q": query},
@@ -241,7 +256,7 @@ def _search_from_artist_catalog(query: str, limit: int | None = None):
     artist_name_norm = _normalize_search_text(best_artist.get("name", ""))
     artist_slug_norm = _normalize_search_text((best_artist.get("slug") or "").replace("-", " "))
 
-    # S\u00f3 usa cat\u00e1logo quando a busca for claramente o artista.
+    # Só usa catálogo quando a busca for claramente o artista.
     if query_norm not in {artist_name_norm, artist_slug_norm}:
         return []
 
@@ -286,7 +301,7 @@ def _search_from_artist_catalog(query: str, limit: int | None = None):
     return results
 
 def _search_from_html(query: str, limit: int = 20):
-    """Fallback usando parsing de HTML para quando o endpoint de sugest\u00f5es falhar."""
+    """Fallback usando parsing de HTML para quando o endpoint de sugestões falhar."""
     response = requests.get(
         CIFRACLUB_SEARCH_URL,
         params={"q": query},
@@ -440,10 +455,56 @@ def search():
         logger.error(f"Error searching: {e}")
         return jsonify({'error': f'Search failed: {str(e)}'}), 500
 
+@app.route('/api/debug/gospel/<artist>')
+def debug_gospel(artist):
+    """Debug route to see exactly what genre parsing evaluates to on the server."""
+    try:
+        url = f"{CIFRACLUB_BASE_URL}/{artist}/"
+        # Use same logic as _is_gospel_artist for consistency
+        resp = requests.get(url, headers=DEFAULT_HEADERS, timeout=8, allow_redirects=False)
+        
+        result = {
+            "artist": artist,
+            "status_code": resp.status_code,
+            "url": resp.url,
+            "all_estilos_links": []
+        }
+        
+        if resp.status_code == 200:
+            soup = BeautifulSoup(resp.text, "html.parser")
+            links = soup.select('a[href*="/estilos/"]')
+            result["all_estilos_links"] = [str(a) for a in links]
+            
+            # Re-run check logic
+            genre_link = None
+            for link in links:
+                href = (link.get("href") or "").lower()
+                if href == "/estilos/": continue
+                genre_link = link
+                break
+                
+            if genre_link:
+                genre_text = genre_link.get_text(strip=True).lower()
+                genre_href = (genre_link.get("href") or "").lower()
+                is_gospel = any(kw in genre_text or kw in genre_href for kw in GOSPEL_KEYWORDS)
+                result.update({
+                    "is_gospel": is_gospel,
+                    "first_valid_genre_text": genre_text,
+                    "first_valid_genre_href": genre_href
+                })
+            else:
+                result.update({"is_gospel": False, "error": "No valid genre link found"})
+        else:
+            result.update({"is_gospel": False, "error": f"Page returned status {resp.status_code}"})
+            
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e), "is_gospel": False})
+
 @app.route('/artists/<artist>/songs/<song>')
 def get_cifra(artist, song):
     """Get cifra by artist and song"""
-    logger.info(f"Requisi\u00e7\u00e3o recebida: artist={artist}, song={song}")
+    logger.info(f"Requisição recebida: artist={artist}, song={song}")
     try:
         cifraclub = CifraClub()
         result = cifraclub.cifra(artist, song)
