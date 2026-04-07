@@ -44,7 +44,8 @@ export function SongSearchModal({ isOpen, onClose, onImport }) {
 
                 // 2. Search External (lp-api)
                 try {
-                    const searchBoxQuery = `${query} gospel louvor worship`;
+                    // Gospel filtering is handled server-side by the API
+                    const searchBoxQuery = query;
                     const response = await fetch(`${API_URL}/search?q=${encodeURIComponent(searchBoxQuery)}`);
                     if (!response.ok) throw new Error('Falha ao buscar a cifra na internet');
                     const data = await response.json();
@@ -59,7 +60,7 @@ export function SongSearchModal({ isOpen, onClose, onImport }) {
                     setExternalResults(resultsWithStatus);
                 } catch (extErr) {
                     console.warn("External search failed:", extErr);
-                    setError("Não foi possível conectar à API de busca externa.");
+                    setError("N\u00e3o foi poss\u00edvel conectar \u00e0 API de busca externa.");
                 }
             } catch (err) {
                 console.error("Search failed:", err);
@@ -88,7 +89,7 @@ export function SongSearchModal({ isOpen, onClose, onImport }) {
         try {
             // Fetch dots/chords from API
             const response = await fetch(`${API_URL}/artists/${item.artist_slug}/songs/${item.song_slug}`);
-            if (!response.ok) throw new Error('Falha ao obter detalhes da música');
+            if (!response.ok) throw new Error('Falha ao obter detalhes da m\u00fasica');
             const data = await response.json();
 
             // Format content using parseImporter
@@ -111,7 +112,7 @@ export function SongSearchModal({ isOpen, onClose, onImport }) {
             onClose();
         } catch (err) {
             console.error("Import failed:", err);
-            setError("Erro ao importar música. Tente novamente.");
+            setError("Erro ao importar m\u00fasica. Tente novamente.");
         } finally {
             setIsSearching(false);
         }
@@ -130,7 +131,7 @@ export function SongSearchModal({ isOpen, onClose, onImport }) {
                                 <Search size={20} />
                             </div>
                             <div>
-                                <h3 className="font-bold text-slate-900 dark:text-white">Buscar Música</h3>
+                                <h3 className="font-bold text-slate-900 dark:text-white">Buscar M\u00fasica</h3>
                                 <p className="text-xs text-slate-500">Busque no sistema ou na internet</p>
                             </div>
                         </div>
@@ -145,7 +146,7 @@ export function SongSearchModal({ isOpen, onClose, onImport }) {
                             <input
                                 autoFocus
                                 type="text"
-                                placeholder="Nome da música ou artista..."
+                                placeholder="Nome da m\u00fasica ou artista..."
                                 className="w-full bg-slate-100 dark:bg-slate-900 border-2 border-transparent focus:border-purple-500 outline-none rounded-xl py-3 pl-12 pr-3 text-slate-900 dark:text-white transition shadow-inner"
                                 value={query}
                                 onChange={(e) => setQuery(e.target.value)}
@@ -186,7 +187,7 @@ export function SongSearchModal({ isOpen, onClose, onImport }) {
                                                 <div className="text-left">
                                                     <div className="text-sm font-bold text-slate-900 dark:text-white line-clamp-1">{song.title}</div>
                                                     <div className="text-xs text-slate-500 line-clamp-1">
-                                                        {song.artist} {song.creatorName && ` • Por: ${song.creatorName}`}
+                                                        {song.artist} {song.creatorName && ` \u2022 Por: ${song.creatorName}`}
                                                     </div>
                                                 </div>
                                             </div>
@@ -236,7 +237,6 @@ export function SongSearchModal({ isOpen, onClose, onImport }) {
                                             )}
                                         </div>
                                     </button>
-                               States: [item.slug] => handleSelectExternal(item)
                                 ))}
                             </div>
                         </div>
@@ -247,7 +247,7 @@ export function SongSearchModal({ isOpen, onClose, onImport }) {
                                     <Info size={32} className="text-slate-300" />
                                 </div>
                                 <p className="text-sm text-slate-500 max-w-xs">
-                                    Digite o nome de uma música ou artista para começar a busca híbrida.
+                                    Digite o nome de uma m\u00fasica ou artista para come\u00e7ar a busca h\u00edbrida.
                                 </p>
                             </div>
                         )}

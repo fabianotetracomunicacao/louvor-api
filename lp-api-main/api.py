@@ -6,6 +6,7 @@ import logging
 import math
 import re
 import unicodedata
+import time
 import requests
 from bs4 import BeautifulSoup
 from flask import Flask, send_from_directory, jsonify, request
@@ -36,10 +37,57 @@ DEFAULT_HEADERS = {
     "Referer": f"{CIFRACLUB_BASE_URL}/",
 }
 
+# Gospel genre keywords for matching
+GOSPEL_KEYWORDS = {"gospel", "religioso", "gospel/religioso", "crist\u00e3", "cristao", "worship"}
+
+# Cache: artist_slug -> (is_gospel: bool, timestamp)
+_artist_genre_cache = {}
+_CACHE_TTL = 86400  # 24 hours
+
+def _is_gospel_artist(artist_slug: str) -> bool:
+    """Check if an artist is classified as Gospel/Religioso on Cifra Club."""
+    now = time.time()
+    cached = _artist_genre_cache.get(artist_slug)
+    if cached and (now - cached[1]) < _CACHE_TTL:
+        return cached[0]
+
+    try:
+        url = f"{CIFRACLUB_BASE_URL}/{artist_slug}/"
+        resp = requests.get(url, headers=DEFAULT_HEADERS, timeout=8)
+        resp.raise_for_status()
+        soup = BeautifulSoup(resp.text, "html.parser")
+
+        genre_link = soup.select_one('a[href*="/estilos/"]')
+        if genre_link:
+            genre_text = genre_link.get_text(strip=True).lower()
+            genre_href = (genre_link.get("href") or "").lower()
+            is_gospel = any(kw in genre_text or kw in genre_href for kw in GOSPEL_KEYWORDS)
+        else:
+            is_gospel = False
+
+        _artist_genre_cache[artist_slug] = (is_gospel, now)
+        logger.info(f"Genre check: {artist_slug} -> {'GOSPEL' if is_gospel else genre_link.get_text(strip=True) if genre_link else 'unknown'}")
+        return is_gospel
+    except Exception as e:
+        logger.warning(f"Genre check failed for {artist_slug}: {e}")
+        _artist_genre_cache[artist_slug] = (False, now)
+        return False
+
+def _filter_gospel_results(results: list) -> list:
+    """Filter search results to only include Gospel/Religioso artists."""
+    filtered = []
+    for item in results:
+        artist_slug = item.get("artist_slug", "")
+        if not artist_slug:
+            continue
+        if _is_gospel_artist(artist_slug):
+            filtered.append(item)
+    return filtered
+
 app = Flask(__name__, static_folder='static', static_url_path='')
 CORS(app) # Enable CORS for all routes
 
-# Rota para servir a página principal
+# Rota para servir a p\u00e1gina principal
 @app.route('/')
 def home():
     """Home route - serves the main HTML page"""
@@ -60,7 +108,7 @@ def _normalize_search_text(value: str) -> str:
     return re.sub(r"\s+", " ", normalized).strip()
 
 def _build_query_variants(query: str):
-    """Gera variações de consulta para cobrir formatos como artista-música."""
+    """Gera varia\u00e7\u00f5es de consulta para cobrir formatos como artista-m\u00fasica."""
     normalized = re.sub(r"\s+", " ", query).strip()
     variants = []
 
@@ -84,7 +132,7 @@ def _build_query_variants(query: str):
     return variants
 
 def _search_from_solr(query: str, limit: int | None = None):
-    """Busca músicas usando o endpoint de sugestões do Cifra Club."""
+    """Busca m\u00fasicas usando o endpoint de sugest\u00f5es do Cifra Club."""
     response = requests.get(
         CIFRACLUB_SOLR_SUGGEST_URL,
         params={"q": query},
@@ -104,7 +152,7 @@ def _search_from_solr(query: str, limit: int | None = None):
     seen = set()
 
     for doc in docs:
-        # t=2 representa item de música
+        # t=2 representa item de m\u00fasica
         if str(doc.get("t")) != "2":
             continue
 
@@ -132,7 +180,7 @@ def _search_from_solr(query: str, limit: int | None = None):
     return results
 
 def _search_from_solr_alt(query: str, limit: int | None = None):
-    """Busca músicas usando endpoint alternativo de sugestão."""
+    """Busca m\u00fasicas usando endpoint alternativo de sugest\u00e3o."""
     response = requests.get(
         CIFRACLUB_SOLR_ALT_SUGGEST_URL,
         params={"q": query},
@@ -175,7 +223,7 @@ def _search_from_solr_alt(query: str, limit: int | None = None):
     return results
 
 def _search_from_artist_catalog(query: str, limit: int | None = None):
-    """Busca catálogo do artista quando a query representa claramente um artista."""
+    """Busca cat\u00e1logo do artista quando a query representa claramente um artista."""
     response = requests.get(
         CIFRACLUB_ARTISTS_SUGGEST_URL,
         params={"q": query},
@@ -193,7 +241,7 @@ def _search_from_artist_catalog(query: str, limit: int | None = None):
     artist_name_norm = _normalize_search_text(best_artist.get("name", ""))
     artist_slug_norm = _normalize_search_text((best_artist.get("slug") or "").replace("-", " "))
 
-    # Só usa catálogo quando a busca for claramente o artista.
+    # S\u00f3 usa cat\u00e1logo quando a busca for claramente o artista.
     if query_norm not in {artist_name_norm, artist_slug_norm}:
         return []
 
@@ -238,7 +286,7 @@ def _search_from_artist_catalog(query: str, limit: int | None = None):
     return results
 
 def _search_from_html(query: str, limit: int = 20):
-    """Fallback usando parsing de HTML para quando o endpoint de sugestões falhar."""
+    """Fallback usando parsing de HTML para quando o endpoint de sugest\u00f5es falhar."""
     response = requests.get(
         CIFRACLUB_SEARCH_URL,
         params={"q": query},
@@ -348,6 +396,11 @@ def search():
                 if all_results:
                     break
 
+        # Filter: only Gospel/Religioso artists
+        gospel_filter = request.args.get('gospel', '1').strip()
+        if gospel_filter == '1':
+            all_results = _filter_gospel_results(all_results)
+
         all_results.sort(
             key=lambda item: (
                 _normalize_search_text(item.get("artist", "")),
@@ -390,7 +443,7 @@ def search():
 @app.route('/artists/<artist>/songs/<song>')
 def get_cifra(artist, song):
     """Get cifra by artist and song"""
-    logger.info(f"Requisição recebida: artist={artist}, song={song}")
+    logger.info(f"Requisi\u00e7\u00e3o recebida: artist={artist}, song={song}")
     try:
         cifraclub = CifraClub()
         result = cifraclub.cifra(artist, song)
