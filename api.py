@@ -6,6 +6,7 @@ import logging
 import math
 import re
 import unicodedata
+import time
 import requests
 from bs4 import BeautifulSoup
 from flask import Flask, send_from_directory, jsonify, request
@@ -35,6 +36,68 @@ DEFAULT_HEADERS = {
     "Origin": CIFRACLUB_BASE_URL,
     "Referer": f"{CIFRACLUB_BASE_URL}/",
 }
+
+# Gospel genre keywords for matching
+GOSPEL_KEYWORDS = {"gospel", "religioso", "gospel/religioso", "cristã", "cristao", "worship"}
+
+# Cache: artist_slug -> (is_gospel: bool, timestamp)
+_artist_genre_cache = {}
+_CACHE_TTL = 86400  # 24 hours
+
+def _is_gospel_artist(artist_slug: str) -> bool:
+    """Check if an artist is classified as Gospel/Religioso on Cifra Club."""
+    now = time.time()
+    cached = _artist_genre_cache.get(artist_slug)
+    if cached and (now - cached[1]) < _CACHE_TTL:
+        return cached[0]
+
+    try:
+        url = f"{CIFRACLUB_BASE_URL}/{artist_slug}/"
+        # Crucial: Prevent redirects to block anti-bot fallback pages serving global headers
+        resp = requests.get(url, headers=DEFAULT_HEADERS, timeout=8, allow_redirects=False)
+        
+        if resp.status_code != 200:
+            _artist_genre_cache[artist_slug] = (False, now)
+            return False
+
+        soup = BeautifulSoup(resp.text, "html.parser")
+        is_gospel = False
+
+        # Strictly check for the explicit artist genre tag, avoiding global navigation
+        genre_link = None
+        
+        # 1. Look for the exact breadcrumb/secondary tag format
+        for link in soup.select('a[href*="/estilos/"]'):
+            href = (link.get("href") or "").lower()
+            if href == "/estilos/": continue # Skip the generic "Estilos musicais" button
+            
+            # The top breadcrumb of the artist usually is directly pointing to their primary genre.
+            genre_link = link
+            break
+            
+        if genre_link:
+            genre_text = genre_link.get_text(strip=True).lower()
+            genre_href = (genre_link.get("href") or "").lower()
+            if any(kw in genre_text or kw in genre_href for kw in GOSPEL_KEYWORDS):
+                is_gospel = True
+
+        _artist_genre_cache[artist_slug] = (is_gospel, now)
+        return is_gospel
+    except Exception as e:
+        logger.warning(f"Genre check failed for {artist_slug}: {e}")
+        _artist_genre_cache[artist_slug] = (False, now)
+        return False
+
+def _filter_gospel_results(results: list) -> list:
+    """Filter search results to only include Gospel/Religioso artists."""
+    filtered = []
+    for item in results:
+        artist_slug = item.get("artist_slug", "")
+        if not artist_slug:
+            continue
+        if _is_gospel_artist(artist_slug):
+            filtered.append(item)
+    return filtered
 
 app = Flask(__name__, static_folder='static', static_url_path='')
 CORS(app) # Enable CORS for all routes
@@ -348,6 +411,11 @@ def search():
                 if all_results:
                     break
 
+        # Filter: only Gospel/Religioso artists
+        gospel_filter = request.args.get('gospel', '1').strip()
+        if gospel_filter == '1':
+            all_results = _filter_gospel_results(all_results)
+
         all_results.sort(
             key=lambda item: (
                 _normalize_search_text(item.get("artist", "")),
@@ -386,6 +454,52 @@ def search():
     except Exception as e:
         logger.error(f"Error searching: {e}")
         return jsonify({'error': f'Search failed: {str(e)}'}), 500
+
+@app.route('/api/debug/gospel/<artist>')
+def debug_gospel(artist):
+    """Debug route to see exactly what genre parsing evaluates to on the server."""
+    try:
+        url = f"{CIFRACLUB_BASE_URL}/{artist}/"
+        # Use same logic as _is_gospel_artist for consistency
+        resp = requests.get(url, headers=DEFAULT_HEADERS, timeout=8, allow_redirects=False)
+        
+        result = {
+            "artist": artist,
+            "status_code": resp.status_code,
+            "url": resp.url,
+            "all_estilos_links": []
+        }
+        
+        if resp.status_code == 200:
+            soup = BeautifulSoup(resp.text, "html.parser")
+            links = soup.select('a[href*="/estilos/"]')
+            result["all_estilos_links"] = [str(a) for a in links]
+            
+            # Re-run check logic
+            genre_link = None
+            for link in links:
+                href = (link.get("href") or "").lower()
+                if href == "/estilos/": continue
+                genre_link = link
+                break
+                
+            if genre_link:
+                genre_text = genre_link.get_text(strip=True).lower()
+                genre_href = (genre_link.get("href") or "").lower()
+                is_gospel = any(kw in genre_text or kw in genre_href for kw in GOSPEL_KEYWORDS)
+                result.update({
+                    "is_gospel": is_gospel,
+                    "first_valid_genre_text": genre_text,
+                    "first_valid_genre_href": genre_href
+                })
+            else:
+                result.update({"is_gospel": False, "error": "No valid genre link found"})
+        else:
+            result.update({"is_gospel": False, "error": f"Page returned status {resp.status_code}"})
+            
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e), "is_gospel": False})
 
 @app.route('/artists/<artist>/songs/<song>')
 def get_cifra(artist, song):
