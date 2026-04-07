@@ -44,7 +44,6 @@ export function SongSearchModal({ isOpen, onClose, onImport }) {
 
                 // 2. Search External (lp-api)
                 try {
-                    // Permanent Gospel Filtering: All external searches are religious-focused by default
                     const searchBoxQuery = `${query} gospel louvor worship`;
                     const response = await fetch(`${API_URL}/search?q=${encodeURIComponent(searchBoxQuery)}`);
                     if (!response.ok) throw new Error('Falha ao buscar a cifra na internet');
