@@ -4,8 +4,6 @@ import logging
 import re
 import requests
 from bs4 import BeautifulSoup
-import requests
-from bs4 import BeautifulSoup
 
 CIFRACLUB_URL = "https://www.cifraclub.com.br/"
 DEFAULT_HEADERS = {
@@ -58,12 +56,22 @@ class CifraClub():
         title_elem = soup.select_one("h1.t1") or soup.find("h1")
         artist_elem = soup.select_one("h2.t3") or soup.find("h2")
         pre_elem = soup.select_one("div.cifra_cnt pre") or soup.find("pre")
+        
+        # --- NOVA LÓGICA DE ESTILO ---
+        # Extrair estilo/gênero do breadcrumb (ex: Gospel/Religioso)
+        style_elem = soup.select_one('nav.breadcrumb a[href*="/estilos/"]') or \
+                     soup.select_one('div.breadcrumb a[href*="/estilos/"]')
+        # -----------------------------
 
         if not pre_elem:
             return False
 
         result["name"] = title_elem.get_text(strip=True) if title_elem else "Título não encontrado"
         result["artist"] = artist_elem.get_text(strip=True) if artist_elem else "Artista não encontrado"
+        
+        # Adicionando o estilo ao resultado
+        result["style"] = style_elem.get_text(strip=True) if style_elem else "Geral"
+        
         result["youtube_url"] = self._extract_youtube_url(soup)
         result["cifra"] = pre_elem.get_text().split("\n")
         return True
