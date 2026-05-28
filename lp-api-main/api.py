@@ -70,8 +70,9 @@ def _is_gospel_artist(artist_slug: str) -> bool:
         return is_gospel
     except Exception as e:
         logger.warning(f"Genre check failed for {artist_slug}: {e}")
-        _artist_genre_cache[artist_slug] = (False, now)
-        return False
+        # Se falhar (ex: bloqueio de Cloudflare no Render), retornamos True por segurança
+        # para que o usuário ainda veja os resultados da busca em vez de uma lista vazia.
+        return True
 
 def _filter_gospel_results(results: list) -> list:
     """Filter search results to only include Gospel/Religioso artists."""
