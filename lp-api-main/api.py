@@ -7,7 +7,7 @@ import math
 import re
 import unicodedata
 import time
-import requests
+from curl_cffi import requests
 from bs4 import BeautifulSoup
 from flask import Flask, send_from_directory, jsonify, request
 from flask_cors import CORS
@@ -53,7 +53,7 @@ def _is_gospel_artist(artist_slug: str) -> bool:
 
     try:
         url = f"{CIFRACLUB_BASE_URL}/{artist_slug}/"
-        resp = requests.get(url, headers=DEFAULT_HEADERS, timeout=8)
+        resp = requests.get(url, impersonate="chrome110", headers=DEFAULT_HEADERS, timeout=8)
         resp.raise_for_status()
         soup = BeautifulSoup(resp.text, "html.parser")
 
@@ -138,6 +138,7 @@ def _search_from_solr(query: str, limit: int | None = None):
     """Busca m\u00fasicas usando o endpoint de sugest\u00f5es do Cifra Club."""
     response = requests.get(
         CIFRACLUB_SOLR_SUGGEST_URL,
+        impersonate="chrome110",
         params={"q": query},
         headers=DEFAULT_HEADERS,
         timeout=10,
@@ -186,6 +187,7 @@ def _search_from_solr_alt(query: str, limit: int | None = None):
     """Busca m\u00fasicas usando endpoint alternativo de sugest\u00e3o."""
     response = requests.get(
         CIFRACLUB_SOLR_ALT_SUGGEST_URL,
+        impersonate="chrome110",
         params={"q": query},
         headers=DEFAULT_HEADERS,
         timeout=10,
@@ -229,6 +231,7 @@ def _search_from_artist_catalog(query: str, limit: int | None = None):
     """Busca cat\u00e1logo do artista quando a query representa claramente um artista."""
     response = requests.get(
         CIFRACLUB_ARTISTS_SUGGEST_URL,
+        impersonate="chrome110",
         params={"q": query},
         headers=DEFAULT_HEADERS,
         timeout=10,
@@ -254,6 +257,7 @@ def _search_from_artist_catalog(query: str, limit: int | None = None):
 
     songs_response = requests.get(
         CIFRACLUB_ARTIST_SONGS_URL,
+        impersonate="chrome110",
         params={"artist_ids": str(artist_id), "_sort": "pt_alphabetical"},
         headers=DEFAULT_HEADERS,
         timeout=10,
@@ -292,6 +296,7 @@ def _search_from_html(query: str, limit: int = 20):
     """Fallback usando parsing de HTML para quando o endpoint de sugest\u00f5es falhar."""
     response = requests.get(
         CIFRACLUB_SEARCH_URL,
+        impersonate="chrome110",
         params={"q": query},
         headers=DEFAULT_HEADERS,
         timeout=10,
