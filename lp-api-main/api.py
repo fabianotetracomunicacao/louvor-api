@@ -63,7 +63,9 @@ def _is_gospel_artist(artist_slug: str) -> bool:
             genre_href = (genre_link.get("href") or "").lower()
             is_gospel = any(kw in genre_text or kw in genre_href for kw in GOSPEL_KEYWORDS)
         else:
-            is_gospel = False
+            # Se não achar o link de estilos, pode ser o Cloudflare retornando 200 OK com página de desafio.
+            # Retornamos True para evitar o falso negativo e não ocultar a música do usuário.
+            is_gospel = True
 
         _artist_genre_cache[artist_slug] = (is_gospel, now)
         logger.info(f"Genre check: {artist_slug} -> {'GOSPEL' if is_gospel else genre_link.get_text(strip=True) if genre_link else 'unknown'}")
