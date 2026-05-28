@@ -2,7 +2,7 @@
 
 import logging
 import re
-import requests
+from curl_cffi import requests
 from bs4 import BeautifulSoup
 
 CIFRACLUB_URL = "https://www.cifraclub.com.br/"
@@ -48,7 +48,7 @@ class CifraClub():
 
     def _extract_with_requests(self, url: str, result: dict) -> bool:
         """Tentativa de extração rápida sem Selenium."""
-        response = requests.get(url, headers=DEFAULT_HEADERS, timeout=20)
+        response = requests.get(url, headers=DEFAULT_HEADERS, timeout=20, impersonate="chrome110")
         response.raise_for_status()
 
         soup = BeautifulSoup(response.text, "html.parser")
