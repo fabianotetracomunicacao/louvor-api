@@ -37,7 +37,7 @@ function mergeSeparatedChords(line) {
                 const prevSpace = mergedTokens[mergedTokens.length - 1];
                 const prevText = mergedTokens[mergedTokens.length - 2];
                 
-                if (prevSpace.trim().length === 0) { // meaning the separator was just spaces
+                if (prevText.trim().length > 0 && prevSpace.trim().length === 0) { // meaning the separator was just spaces and prevText is an actual token
                     const combined = prevText + t;
                     if (isChord(combined) && (!isChord(prevText) || !isChord(t))) {
                         mergedTokens.pop(); 
