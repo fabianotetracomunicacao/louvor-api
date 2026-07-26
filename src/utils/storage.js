@@ -491,7 +491,10 @@ export async function saveSong(songData) {
 
         clearAllListCaches();
 
-        return mapSongFromDb(data);
+        const mapped = mapSongFromDb(data);
+        // Invalidate memory cache so next getSongById fetches fresh data
+        songMemoryCache.delete(String(songData.id));
+        return mapped;
     } else {
         // Create
         // Remove undefined ID to let DB generate it

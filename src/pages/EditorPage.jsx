@@ -159,11 +159,16 @@ export function EditorPage() {
 
                     // Internal format is always Code/ChordPro. 
                     // If default mode is Visual, convert immediately.
-                    if (editorMode === 'visual') {
-                        setContent(exportToVisual(song.content));
-                    } else {
-                        setContent(song.content);
-                    }
+                    const loadedContent = editorMode === 'visual'
+                        ? exportToVisual(song.content)
+                        : song.content;
+
+                    setContent(loadedContent);
+                    // Sync contentRef so undo history starts from the loaded content
+                    contentRef.current = loadedContent;
+                    historyRef.current = [];
+                    redoRef.current = [];
+                    updateUndoRedoStatus();
 
                     setOriginalKey(song.originalKey || 'C');
                     if (song.fontSize) setFontSize(song.fontSize);
@@ -189,11 +194,16 @@ export function EditorPage() {
             setCifraclubSlug(data.cifraclub_slug || null);
             setIsOfficial(false);
 
-            if (editorMode === 'visual') {
-                setContent(exportToVisual(data.content));
-            } else {
-                setContent(data.content);
-            }
+            const importedContent = editorMode === 'visual'
+                ? exportToVisual(data.content)
+                : data.content;
+
+            setContent(importedContent);
+            // Sync contentRef so undo history starts from the imported content
+            contentRef.current = importedContent;
+            historyRef.current = [];
+            redoRef.current = [];
+            updateUndoRedoStatus();
 
             // Suggest detected key if missing or unknown in import data
             if (!data.originalKey || data.originalKey === '?') {
@@ -201,24 +211,25 @@ export function EditorPage() {
                 if (detected) setOriginalKey(detected);
             }
 
-            // Optional: Clear state to avoid re-imports on refresh
-            // navigate(location.pathname, { replace: true, state: {} });
+            // Clear state to prevent re-import when editorMode changes (critical bug fix)
+            navigate(location.pathname + location.search, { replace: true, state: {} });
         }
-    }, [location.state, editorMode]);
+    }, [location.state]);
 
     // Handle Mode Switching
     const handleModeSwitch = (newMode) => {
         if (newMode === editorMode) return;
 
+        let switched;
         if (newMode === 'visual') {
             // Code -> Visual
-            const visualContent = exportToVisual(content);
-            setContent(visualContent);
+            switched = exportToVisual(content);
         } else {
             // Visual -> Code
-            const codeContent = parseImporter(content);
-            setContent(codeContent);
+            switched = parseImporter(content);
         }
+        setContent(switched);
+        contentRef.current = switched;
         setEditorMode(newMode);
     };
 
