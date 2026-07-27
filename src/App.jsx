@@ -24,7 +24,7 @@ import { AdminContentReviewPage } from './pages/AdminContentReviewPage';
 import ProjectorControlPage from './pages/ProjectorControlPage';
 import { LoginPage } from './pages/LoginPage';
 import { EmailConfirmationPage } from './pages/EmailConfirmationPage';
-import { ProtectedRoute } from './components/ProtectedRoute';
+import { ProtectedRoute, AdminRoute, SuperAdminRoute } from './components/ProtectedRoute';
 import { ReloadPrompt } from './components/ReloadPrompt';
 import ProjectorPage from './pages/ProjectorPage';
 import { SchedulesPage } from './pages/SchedulesPage';
