@@ -8,7 +8,8 @@ export default defineConfig({
   timeout: 30000,
   reporter: [
     ['list'],
-    ['html', { open: 'never', outputFolder: 'playwright-report' }]
+    ['html', { open: 'never', outputFolder: 'playwright-report' }],
+    ['json', { outputFile: 'test-results/report.json' }]
   ],
   use: {
     baseURL: 'http://localhost:5173',

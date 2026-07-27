@@ -267,4 +267,23 @@ export class DiagnosticsService {
   static clearHistory() {
     localStorage.removeItem('diagnostics_history');
   }
+
+  static async fetchLatestE2EReport() {
+    try {
+      const { data, error } = await supabase
+        .from('e2e_reports')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .single();
+        
+      if (error && error.code !== 'PGRST116') { // PGRST116 is "No rows found"
+        throw error;
+      }
+      return data || null;
+    } catch (err) {
+      console.error('Erro ao buscar o relatório E2E:', err);
+      return null;
+    }
+  }
 }

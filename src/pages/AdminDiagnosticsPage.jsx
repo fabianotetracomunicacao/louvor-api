@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { DiagnosticsService } from '../services/DiagnosticsService';
-import { ShieldCheck, Activity, Database, KeyRound, Globe, HardDrive, Radio, RefreshCw, CheckCircle2, AlertTriangle, XCircle, Clock, Trash2, ChevronRight, Zap } from 'lucide-react';
+import { ShieldCheck, Activity, Database, KeyRound, Globe, HardDrive, Radio, RefreshCw, CheckCircle2, AlertTriangle, XCircle, Clock, Trash2, ChevronRight, Zap, Bot } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { Navigate } from 'react-router-dom';
 
@@ -9,6 +9,7 @@ export function AdminDiagnosticsPage() {
   const [isRunning, setIsRunning] = useState(false);
   const [currentReport, setCurrentReport] = useState(null);
   const [history, setHistory] = useState([]);
+  const [latestE2EReport, setLatestE2EReport] = useState(null);
 
   // Restringe acesso a administradores
   if (!isSuperAdmin && !isChurchAdmin) {
@@ -21,6 +22,7 @@ export function AdminDiagnosticsPage() {
     if (savedHistory.length > 0) {
       setCurrentReport(savedHistory[0]);
     }
+    DiagnosticsService.fetchLatestE2EReport().then(setLatestE2EReport);
   }, []);
 
   const handleRunCheckup = async () => {
@@ -29,6 +31,8 @@ export function AdminDiagnosticsPage() {
       const report = await DiagnosticsService.runFullDiagnostics();
       setCurrentReport(report);
       setHistory(DiagnosticsService.getHistory());
+      const e2e = await DiagnosticsService.fetchLatestE2EReport();
+      setLatestE2EReport(e2e);
     } catch (err) {
       console.error('Erro ao rodar diagnósticos:', err);
     } finally {
@@ -161,6 +165,49 @@ export function AdminDiagnosticsPage() {
               </div>
             </div>
           </div>
+
+          {/* E2E Robots Card */}
+          {latestE2EReport && (
+            <div className="p-6 rounded-3xl bg-indigo-50 dark:bg-indigo-950/20 border border-indigo-200 dark:border-indigo-800 shadow-sm mb-6">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-xl font-black text-indigo-900 dark:text-indigo-400 flex items-center gap-2">
+                  <Bot className="w-6 h-6" />
+                  Última Bateria de Testes de Uso (Robôs E2E)
+                </h2>
+                {latestE2EReport.status === 'success' ? (
+                  <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-bold bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400 border border-emerald-300 dark:border-emerald-800">
+                    <CheckCircle2 className="w-4 h-4" /> Passou em Todos
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-bold bg-red-100 dark:bg-red-950/60 text-red-700 dark:text-red-400 border border-red-300 dark:border-red-800">
+                    <XCircle className="w-4 h-4" /> Falhas Detectadas
+                  </span>
+                )}
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div className="bg-white dark:bg-slate-900 p-4 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800">
+                  <p className="text-xs font-bold text-slate-400 uppercase">Testes Passaram</p>
+                  <p className="text-2xl font-black text-emerald-600">{latestE2EReport.passed_tests}</p>
+                </div>
+                <div className="bg-white dark:bg-slate-900 p-4 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800">
+                  <p className="text-xs font-bold text-slate-400 uppercase">Testes Falharam</p>
+                  <p className="text-2xl font-black text-red-600">{latestE2EReport.failed_tests}</p>
+                </div>
+                <div className="bg-white dark:bg-slate-900 p-4 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800">
+                  <p className="text-xs font-bold text-slate-400 uppercase">Duração (Total)</p>
+                  <p className="text-2xl font-black text-slate-700 dark:text-slate-200">
+                    {(latestE2EReport.total_time_ms / 1000).toFixed(1)}s
+                  </p>
+                </div>
+                <div className="bg-white dark:bg-slate-900 p-4 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800">
+                  <p className="text-xs font-bold text-slate-400 uppercase">Data da Execução</p>
+                  <p className="text-lg font-bold text-slate-700 dark:text-slate-200 mt-1 leading-tight">
+                    {new Date(latestE2EReport.created_at).toLocaleString('pt-BR')}
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Module Breakdown Grid */}
           <div className="space-y-4">
