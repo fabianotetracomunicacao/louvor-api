@@ -58,7 +58,7 @@ export function AuthProvider({ children }) {
                     .from('church_user_memberships')
                     .select(`
                         *,
-                        church: churches(*, subscription:subscriptions(*))
+                        church: churches(*, subscription:subscriptions!subscriptions_church_id_fkey(*))
                     `)
                     .eq('user_id', userId)
                     .eq('status', 'active');
