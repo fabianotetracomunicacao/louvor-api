@@ -719,11 +719,37 @@ export async function copySong(songId) {
  * @returns {Promise<boolean>} New Status
  */
 export async function toggleSongOfficial(songId) {
-    const { data, error } = await supabase
-        .rpc('toggle_song_official', { target_song_id: songId });
+    let newStatus = false;
 
-    if (error) throw error;
-    return data;
+    try {
+        const { data, error } = await supabase
+            .rpc('toggle_song_official', { target_song_id: songId });
+
+        if (!error && data !== null && data !== undefined) {
+            newStatus = data;
+        } else {
+            throw error || new Error("RPC returned null");
+        }
+    } catch (e) {
+        // Fallback: Direct table toggle
+        const { data: currentSong } = await supabase
+            .from('songs')
+            .select('is_official')
+            .eq('id', songId)
+            .single();
+
+        newStatus = !currentSong?.is_official;
+
+        const { error: updateErr } = await supabase
+            .from('songs')
+            .update({ is_official: newStatus })
+            .eq('id', songId);
+
+        if (updateErr) throw updateErr;
+    }
+
+    clearAllListCaches();
+    return newStatus;
 }
 
 // --- TRASH / RECOVERY ---
