@@ -5,6 +5,10 @@
       "destination": "/index.html"
     }
   ],
+  "env": {
+    "VITE_SUPABASE_URL": "https://jthvbixdlkrbeztqqqkx.supabase.co",
+    "VITE_SUPABASE_ANON_KEY": "sb_publishable_jhIGoP1fIApPFDHi_enYcw_UNATA3Ja"
+  },
   "headers": [
     {
       "source": "/(.*)",
