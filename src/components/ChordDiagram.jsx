@@ -9,23 +9,42 @@ export function ChordDiagram({ chordData }) {
 
     const width = 120;
     const height = 140;
-    const gridX = 20;
+    const gridX = 22;
     const gridY = 30;
     const stringGap = 16;
     const fretGap = 20;
 
-    // Determine base fret
-    let baseFret = 1;
     const distinctFrets = frets.filter(f => f > 0);
     const hasOpenString = frets.some(f => f === 0);
+    const minFret = distinctFrets.length > 0 ? Math.min(...distinctFrets) : 1;
 
-    // Only shift base fret if NO open strings and lowest fret is > 2
-    if (!hasOpenString && distinctFrets.length > 0) {
-        const minFret = Math.min(...distinctFrets);
-        if (minFret > 2) {
-            baseFret = minFret;
-        }
+    // Determine base fret
+    let baseFret = chordData.baseFret || 1;
+    if (baseFret === 1 && !hasOpenString && minFret > 1) {
+        baseFret = minFret;
     }
+
+    // Helper to compute relative fret position within the 4-fret diagram
+    const getRelativeFret = (fretVal) => {
+        if (!fretVal || fretVal <= 0) return 0;
+        if ((chordData.baseFret || 1) > 1) {
+            return fretVal;
+        }
+        return fretVal - baseFret + 1;
+    };
+
+    // Check if a fret dot is redundant because a barre finger already holds it down
+    const isNoteCoveredByBarre = (fretVal, stringIndex) => {
+        if (!barres || barres.length === 0 || fretVal <= 0) return false;
+        const relFret = getRelativeFret(fretVal);
+        return barres.some(b => {
+            const bFret = typeof b === 'number' ? b : (b.fret || 1);
+            const bRelFret = getRelativeFret(bFret);
+            const bFrom = typeof b.from === 'number' ? b.from : 0;
+            const bTo = typeof b.to === 'number' ? b.to : 5;
+            return bRelFret === relFret && stringIndex >= bFrom && stringIndex <= bTo;
+        });
+    };
 
     // Grid Labels (Strings)
     const strings = [0, 1, 2, 3, 4, 5]; // E A D G B e
@@ -41,7 +60,16 @@ export function ChordDiagram({ chordData }) {
 
             {/* Base Fret Label if > 1 */}
             {baseFret > 1 && (
-                <text x={0} y={gridY + 12} fontSize="14" fontWeight="bold" className="fill-slate-500 dark:fill-slate-400" style={{ fontVariantNumeric: 'tabular-nums' }}>{baseFret}ª</text>
+                <text 
+                    x={2} 
+                    y={gridY + 12} 
+                    fontSize="12" 
+                    fontWeight="bold" 
+                    className="fill-slate-500 dark:fill-slate-400" 
+                    style={{ fontVariantNumeric: 'tabular-nums' }}
+                >
+                    {baseFret}ª
+                </text>
             )}
 
             {/* Frets (Horizontal Lines) */}
@@ -52,7 +80,7 @@ export function ChordDiagram({ chordData }) {
                     y1={gridY + (i * fretGap)}
                     x2={gridX + (5 * stringGap)}
                     y2={gridY + (i * fretGap)}
-                    strokeWidth={i === 0 && baseFret === 1 ? 4 : 1.5} // Thicker nut
+                    strokeWidth={i === 0 && baseFret === 1 ? 4 : 1.5} // Thicker nut when baseFret is 1
                     strokeLinecap="round"
                     className={i === 0 && baseFret === 1 ? "stroke-slate-800 dark:stroke-slate-200" : "stroke-slate-300 dark:stroke-slate-600"}
                 />
@@ -73,11 +101,12 @@ export function ChordDiagram({ chordData }) {
 
             {/* Barres */}
             {barres && barres.map((barre, i) => {
-                const relativeFret = (barre.fret || 1) - (baseFret || 1) + 1;
+                const bFret = typeof barre === 'number' ? barre : (barre.fret || 1);
+                const relativeFret = getRelativeFret(bFret);
                 if (relativeFret < 1 || isNaN(relativeFret)) return null;
 
                 const barreFrom = typeof barre.from === 'number' ? barre.from : 0;
-                const barreTo = typeof barre.to === 'number' ? barre.to : 0;
+                const barreTo = typeof barre.to === 'number' ? barre.to : 5;
                 const rectX = gridX + (barreFrom * stringGap) - 6;
                 const rectY = gridY + (relativeFret * fretGap) - 14;
                 const rectWidth = (barreTo - barreFrom) * stringGap + 12;
@@ -133,8 +162,15 @@ export function ChordDiagram({ chordData }) {
                     );
                 }
 
+                // Skip individual circle if this string position is already held by a barre finger
+                if (isNoteCoveredByBarre(fret, stringIndex)) {
+                    return null;
+                }
+
                 // Pressed Fret
-                const relativeFret = fret - baseFret + 1;
+                const relativeFret = getRelativeFret(fret);
+                if (relativeFret < 1) return null;
+
                 return (
                     <circle
                         key={`note-${stringIndex}`}
