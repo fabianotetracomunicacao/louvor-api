@@ -7,8 +7,12 @@ import React from 'react';
 export function LiquidLoader({ fullScreen = false, text = 'LouvorPlay' }) {
     const loaderContent = (
         <div className="liquid-loader">
-            <div className="loading-text text-slate-800 dark:text-white">
-                {text}<span className="dot">.</span><span className="dot">.</span><span className="dot">.</span>
+            <div className="flex flex-col items-center mb-1">
+                <img 
+                    src="/logo_official.png" 
+                    alt="LouvorPlay" 
+                    className="h-10 md:h-12 w-auto object-contain drop-shadow-md select-none animate-pulse" 
+                />
             </div>
 
             <div className="loader-track">
