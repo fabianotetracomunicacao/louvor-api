@@ -1,5 +1,6 @@
 import { supabase } from '../supabaseClient';
 import guitarDb from '@tombatossals/chords-db/lib/guitar.json';
+import { generateGuitarChordVoicings } from './guitarChordGenerator';
 
 // In-memory cache for fetched chords
 const chordCache = {};
@@ -275,7 +276,18 @@ export async function fetchChordData(chordName) {
         return result;
     }
 
-    // Fallback 1: Slash chords (e.g. Ab/C -> Ab)
+    // Dynamic Guitar Chord Voicing Generator (Calculates anatomical voicings for ANY chord)
+    try {
+        const generated = generateGuitarChordVoicings(chordName);
+        if (generated && generated.positions && generated.positions.length > 0) {
+            chordCache[chordName] = generated;
+            return generated;
+        }
+    } catch (e) {
+        console.warn("Dynamic guitar chord generator error:", e);
+    }
+
+    // Fallback 1: Slash chords base lookup (e.g. Ab/C -> Ab)
     if (chordName.includes('/')) {
         const slashIndex = chordName.indexOf('/');
         const baseChordName = chordName.slice(0, slashIndex);
@@ -356,6 +368,17 @@ export function getChordData(chordName) {
             chordCache[chordName] = result;
             return result;
         }
+    }
+
+    // Dynamic Generator Fallback
+    try {
+        const generated = generateGuitarChordVoicings(chordName);
+        if (generated && generated.positions && generated.positions.length > 0) {
+            chordCache[chordName] = generated;
+            return generated;
+        }
+    } catch (e) {
+        console.warn("Dynamic guitar chord generator error:", e);
     }
 
     // Fallback 1 for getChordData: Slash chords (e.g. Ab/C -> Ab)
