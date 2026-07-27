@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { X, Save, Shuffle, List, Music, Plus, Trash2, ArrowRight, RotateCcw, Check, GripVertical } from 'lucide-react';
+import { X, Save, Shuffle, List, Music, Plus, Trash2, ArrowRight, RotateCcw, Check, GripVertical, CheckCircle2, XCircle, Clock, Send } from 'lucide-react';
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
 
 import { getSongFunctions, searchProfiles, getSetlistScale, addUserToSetlistScale, removeUserFromSetlistScale, getPlaylistMembers, getInstruments } from '../utils/storage';
+import { WhatsAppService } from '../services/WhatsAppService';
 import { supabase } from '../supabaseClient';
 import { Portal } from './Portal';
 import { User, Calendar, Shield, Search, UserPlus, Users } from 'lucide-react';
@@ -601,35 +602,59 @@ export function SetlistManager({ playlistId, songs, onClose, onSave, initialData
                                     <div className="text-center text-slate-400 text-sm py-2">Ninguém escalado ainda.</div>
                                 ) : (
                                     <div className="flex flex-wrap gap-2">
-                                        {scaleMembers.map(member => (
-                                            <div key={member.id} className="flex items-center gap-2 pl-1 pr-2 py-1 bg-white dark:bg-slate-800 rounded-full border border-slate-200 dark:border-slate-700 shadow-sm">
-                                                <div className="w-6 h-6 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden">
-                                                    {member.user?.avatar_url ? (
-                                                        <img src={member.user.avatar_url} alt={member.user.name} className="w-full h-full object-cover" />
-                                                    ) : (
-                                                        <div className="w-full h-full flex items-center justify-center text-[10px] font-bold text-slate-500">
-                                                            {(member.user?.name || '?').charAt(0)}
-                                                        </div>
-                                                    )}
+                                        {scaleMembers.map(member => {
+                                            const status = member.status || 'PENDING';
+                                            const isConfirmed = status === 'CONFIRMED';
+                                            const isDeclined = status === 'DECLINED';
+                                            
+                                            let badgeStyle = 'bg-amber-50 dark:bg-amber-950/40 border-amber-300 dark:border-amber-700 text-amber-800 dark:text-amber-200';
+                                            if (isConfirmed) {
+                                                badgeStyle = 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-400 dark:border-emerald-700 text-emerald-800 dark:text-emerald-200';
+                                            } else if (isDeclined) {
+                                                badgeStyle = 'bg-rose-50 dark:bg-rose-950/40 border-rose-400 dark:border-rose-700 text-rose-800 dark:text-rose-200';
+                                            }
+
+                                            return (
+                                                <div key={member.id} className={`flex items-center gap-2 pl-1 pr-2 py-1.5 rounded-full border shadow-sm transition ${badgeStyle}`}>
+                                                    <div className="w-6 h-6 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden relative">
+                                                        {member.user?.avatar_url ? (
+                                                            <img src={member.user.avatar_url} alt={member.user.name} className="w-full h-full object-cover" />
+                                                        ) : (
+                                                            <div className="w-full h-full flex items-center justify-center text-[10px] font-bold text-slate-500">
+                                                                {(member.user?.name || '?').charAt(0)}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                    <span className="text-xs font-bold truncate max-w-[80px]">
+                                                        {member.user?.name?.split(' ')[0] || member.user?.email}
+                                                    </span>
+                                                    
+                                                    {/* Status Badge Icon */}
+                                                    <span className="flex items-center gap-1 text-[10px] font-extrabold uppercase px-1.5 py-0.5 rounded-md bg-white/80 dark:bg-slate-800/80 shadow-xs" title={`Status: ${status}`}>
+                                                        {isConfirmed && <CheckCircle2 size={12} className="text-emerald-500" />}
+                                                        {isDeclined && <XCircle size={12} className="text-rose-500" />}
+                                                        {!isConfirmed && !isDeclined && <Clock size={12} className="text-amber-500" />}
+                                                        <span>{isConfirmed ? 'OK' : isDeclined ? 'Recusou' : 'Pendente'}</span>
+                                                    </span>
+
+                                                    <button
+                                                        onClick={() => editMemberRole(member)}
+                                                        className="bg-purple-100 dark:bg-purple-900/40 text-[9px] font-extrabold text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800 px-1.5 py-0.5 cursor-pointer hover:bg-purple-200 dark:hover:bg-purple-900/60 rounded-md truncate max-w-[90px]"
+                                                        title="Alterar Função"
+                                                    >
+                                                        {member.role}
+                                                    </button>
+
+                                                    <button
+                                                        onClick={() => removeFromScale(member.id)}
+                                                        className="w-5 h-5 flex items-center justify-center rounded-full text-slate-400 hover:text-rose-600 hover:bg-white dark:hover:bg-slate-800"
+                                                        title="Remover da escala"
+                                                    >
+                                                        <X size={12} />
+                                                    </button>
                                                 </div>
-                                                <span className="text-xs font-bold text-slate-700 dark:text-slate-200 max-w-[80px] truncate">
-                                                    {member.user?.name?.split(' ')[0] || member.user?.email}
-                                                </span>
-                                                <button
-                                                    onClick={() => editMemberRole(member)}
-                                                    className="bg-purple-50 dark:bg-purple-900/30 text-[9px] font-extrabold text-purple-600 dark:text-purple-400 border border-purple-200 dark:border-purple-800 ml-1 px-2 py-0.5 cursor-pointer hover:bg-purple-100 dark:hover:bg-purple-900/50 rounded-md truncate max-w-[100px]"
-                                                    title="Alterar Função"
-                                                >
-                                                    {member.role}
-                                                </button>
-                                                <button
-                                                    onClick={() => removeFromScale(member.id)}
-                                                    className="w-5 h-5 flex items-center justify-center rounded-full text-slate-400 hover:text-red-500 hover:bg-slate-100 dark:hover:bg-slate-700"
-                                                >
-                                                    <X size={12} />
-                                                </button>
-                                            </div>
-                                        ))}
+                                            );
+                                        })}
                                     </div>
                                 )}
                             </div>

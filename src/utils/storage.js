@@ -1,4 +1,5 @@
 import { supabase } from '../supabaseClient';
+import { WhatsAppService } from '../services/WhatsAppService';
 
 /**
  * Storage service using Supabase.
@@ -996,9 +997,14 @@ export async function getSetlistScale(setlistId) {
     const { data, error } = await supabase
         .from('setlist_scales')
         .select(`
-id,
-    role,
-    user: profiles(id, name, full_name, avatar_url, email)
+            id,
+            role,
+            status,
+            whatsapp_status,
+            confirmed_at,
+            declined_at,
+            decline_reason,
+            user: profiles(id, name, full_name, avatar_url, email, phone, whatsapp)
         `)
         .eq('setlist_id', setlistId);
 
@@ -1010,6 +1016,11 @@ id,
     return data.map(item => ({
         id: item.id,
         role: item.role,
+        status: item.status || 'PENDING',
+        whatsappStatus: item.whatsapp_status || 'NOT_SENT',
+        confirmedAt: item.confirmed_at,
+        declinedAt: item.declined_at,
+        declineReason: item.decline_reason,
         user: item.user
     }));
 }
@@ -1042,7 +1053,7 @@ export async function addUserToSetlistScale(setlistId, userId, role = null) {
     // 1. Add/Update Scale
     const { data, error } = await supabase
         .from('setlist_scales')
-        .upsert({ setlist_id: setlistId, user_id: userId, role }, { onConflict: 'setlist_id, user_id' })
+        .upsert({ setlist_id: setlistId, user_id: userId, role, status: 'PENDING' }, { onConflict: 'setlist_id, user_id' })
         .select()
         .single();
     if (error) {
@@ -1052,7 +1063,7 @@ export async function addUserToSetlistScale(setlistId, userId, role = null) {
     // 2. Fetch Setlist Details for Notification
     const { data: setlist } = await supabase
         .from('setlists')
-        .select('name, date, playlist_id')
+        .select('name, title, date, playlist_id')
         .eq('id', setlistId)
         .single();
 
@@ -1064,11 +1075,37 @@ export async function addUserToSetlistScale(setlistId, userId, role = null) {
             dateStr = d.toLocaleDateString('pt-BR', { timeZone: 'UTC' });
         }
 
-        const message = `Você foi escalado para o setlist "${setlist.name}" para o dia ${dateStr}${role ? ` como: ${role}` : ''}.`;
+        const setlistTitle = setlist.title || setlist.name || 'Setlist';
+        const message = `Você foi escalado para o culto "${setlistTitle}" no dia ${dateStr}${role ? ` como: ${role}` : ''}.`;
         const link = `/escalas`;
 
         // 3. Create Notification
         await createNotification(userId, 'Nova Escala', message, 'info', link);
+
+        // 4. Trigger Automatic WhatsApp Confirmation (Async)
+        try {
+            const { data: musicianProfile } = await supabase
+                .from('profiles')
+                .select('name, full_name, phone, whatsapp')
+                .eq('id', userId)
+                .single();
+
+            const phone = musicianProfile?.whatsapp || musicianProfile?.phone;
+            const musicianName = musicianProfile?.name || musicianProfile?.full_name || 'Músico';
+
+            if (phone) {
+                WhatsAppService.sendScaleConfirmation({
+                    scaleId: data.id,
+                    musicianPhone: phone,
+                    musicianName,
+                    roleName: role,
+                    setlistTitle,
+                    setlistDate: setlist.date
+                }).catch(err => console.warn('[WhatsApp AutoSend] Error:', err));
+            }
+        } catch (e) {
+            console.warn('[WhatsApp AutoSend] Warning preparing message:', e);
+        }
     }
 
     return data;
