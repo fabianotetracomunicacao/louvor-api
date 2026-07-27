@@ -531,13 +531,13 @@ export function MainLayout() {
 
             {/* Main Content Area */}
             {/* Fix: If isPlayerPage OR isPlaylistDetailPage OR isEditorPage, remove overflow-y-auto so page can handle its own scroll */}
-            <main className={`flex-1 ${(isPlayerPage || isPlaylistDetailPage || isEditorPage || isProjectorControlPage) ? 'overflow-hidden' : 'overflow-y-auto'} p-4 ${(isPlayerPage || isEditorPage || isProjectorControlPage) ? 'p-0' : ''} print:p-0 print:overflow-visible`} style={(!isPlayerPage && !isProjectorControlPage) ? { paddingBottom: 'calc(6rem + env(safe-area-inset-bottom))' } : {}}>
+            <main className={`flex-1 ${(isPlayerPage || isPlaylistDetailPage || isEditorPage || isProjectorControlPage) ? 'overflow-hidden' : 'overflow-y-auto'} p-4 ${(isPlayerPage || isEditorPage || isProjectorControlPage) ? 'p-0' : ''} print:p-0 print:overflow-visible`} style={(!isPlayerPage && !isProjectorControlPage && !isEditorPage) ? { paddingBottom: 'calc(6rem + env(safe-area-inset-bottom))' } : {}}>
                 <Outlet context={{ theme, toggleTheme }} />
                 <OfflineIndicator />
             </main>
 
             {/* Bottom Navigation (Mobile First) */}
-            {!isPlayerPage && (
+            {!isPlayerPage && !isEditorPage && (
                 <nav className="fixed bottom-0 left-0 right-0 bg-white/95 dark:bg-slate-800/95 backdrop-blur border-t border-slate-200 dark:border-slate-700 px-6 py-3 print:hidden z-20 safe-area-bottom">
                     <div className="flex items-center justify-between max-w-md mx-auto">
                         <NavLink
