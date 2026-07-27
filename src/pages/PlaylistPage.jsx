@@ -1363,8 +1363,8 @@ export function PlaylistPage() {
                                                                                     <button
                                                                                         onClick={(e) => {
                                                                                             e.stopPropagation();
-                                                                                            const context = getNavigationContext(filteredItems, 'playlist', selectedPlaylist?.name, selectedPlaylist?.id);
-                                                                                            const index = filteredItems.indexOf(item);
+                                                                                            const context = getNavigationContext(selectedPlaylist.items, 'playlist', selectedPlaylist?.name, selectedPlaylist?.id);
+                                                                                            const index = selectedPlaylist.items.indexOf(item);
 
                                                                                             navigate(`/player/${item.song?.id}`, {
                                                                                                 state: {

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Calendar, Clock, Music, ArrowRight, User, List, ChevronRight, Play } from 'lucide-react';
+import { Calendar, Clock, Music, ArrowRight, User, List, ChevronRight, Play, MonitorUp } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { getMySchedules } from '../utils/storage';
 import { useNotification } from '../contexts/NotificationContext';
@@ -78,6 +78,25 @@ export function SchedulesPage() {
         });
     };
 
+    const handleProjectScale = (e, item) => {
+        e.stopPropagation();
+        const setlist = item.setlist;
+        if (!setlist || !setlist.items || setlist.items.length === 0) {
+            showToast('Esta escala não possui músicas cadastradas para projetar.', 'info');
+            return;
+        }
+
+        const firstItem = setlist.items[0];
+        const firstSongId = firstItem.song?.id || firstItem.song_id;
+
+        if (!firstSongId) {
+            showToast('Não foi possível carregar as músicas da escala.', 'warning');
+            return;
+        }
+
+        navigate(`/projector?songId=${firstSongId}`);
+    };
+
     if (isLoading) {
         return <LiquidLoader fullScreen={true} />;
     }
@@ -121,6 +140,14 @@ export function SchedulesPage() {
                     >
                         <Play size={14} fill="currentColor" />
                         <span>Tocar</span>
+                    </button>
+                    <button
+                        onClick={(e) => handleProjectScale(e, item)}
+                        className="flex items-center gap-1.5 px-3 py-2 bg-indigo-100 hover:bg-indigo-200 dark:bg-indigo-900/30 dark:hover:bg-indigo-900/50 text-indigo-700 dark:text-indigo-300 rounded-lg font-bold text-xs transition"
+                        title="Projetar músicas da escala"
+                    >
+                        <MonitorUp size={14} />
+                        <span>Projetar</span>
                     </button>
                     <ChevronRight size={20} className="text-slate-300 group-hover:text-purple-500 transition" />
                 </div>

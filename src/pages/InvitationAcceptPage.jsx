@@ -36,7 +36,7 @@ export function InvitationAcceptPage() {
         if (!user) return;
         setAccepting(true);
         try {
-            await InvitationService.acceptInvitation(token, user.id);
+            await InvitationService.acceptInvitation(token, user.id, user.email);
             // Refresh page/context logic or just navigate home
             window.location.href = '/'; // Hard reload to refresh all context/RLS
         } catch (err) {
