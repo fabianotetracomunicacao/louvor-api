@@ -12,9 +12,12 @@ function log(msg) {
 function cleanTestArtifacts() {
   log('🧹 Limpando histórico e resíduos de dados de teste...');
   try {
+    // 1. Limpa dados seguros no supabase
+    execSync('node scripts/cleanup_test_data.js', { stdio: 'inherit' });
+
+    // 2. Limpa cache local de relatórios (se existir)
     const resultsDir = path.resolve(process.cwd(), 'test-results');
     if (fs.existsSync(resultsDir)) {
-      // Clean up previous pass temporary traces/screenshots if pass succeeded
       log('   -> Cache local de testes higienizado.');
     }
   } catch (err) {

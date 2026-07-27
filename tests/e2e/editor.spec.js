@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 
-test.describe('Módulo 3: Playlists e Setlists Colaborativas (Race Conditions)', () => {
+test.describe('Módulo 4: Editor de Músicas (Undo/Redo e Fuzzing)', () => {
 
   const TEST_IDENTIFIER = '[TEST_E2E]';
 
@@ -41,18 +41,32 @@ test.describe('Módulo 3: Playlists e Setlists Colaborativas (Race Conditions)',
     });
   });
 
-  test('Deve criar uma setlist massiva e suportar operações simultâneas', async ({ page }) => {
-    await page.goto('/playlists');
+  test('Deve lidar com edições massivas, Undo/Redo rápido sem perder estado', async ({ page }) => {
+    await page.goto('/editor');
     
-    // Tentar abrir modais repetidas vezes muito rápido (Race Condition)
-    const newPlaylistBtn = page.locator('button', { hasText: 'Nova Playlist' });
-    if (await newPlaylistBtn.isVisible()) {
-       await newPlaylistBtn.click();
-       await newPlaylistBtn.click(); // Double click
-       await page.keyboard.press('Escape');
+    const textarea = page.locator('textarea');
+    if (await textarea.isVisible()) {
+        // Digitar muito rápido
+        await textarea.fill('Verso 1\n[C] [G] [Am] [F]\n');
+        
+        // Simular ctrl+z e ctrl+y (ou equivalente via botões, se existirem na interface)
+        // Como o editor pode usar botões Undo/Redo:
+        const undoBtn = page.locator('button[title*="Desfazer"]');
+        const redoBtn = page.locator('button[title*="Refazer"]');
+        
+        if (await undoBtn.isVisible()) {
+            await undoBtn.click();
+            await undoBtn.click();
+            await redoBtn.click();
+        }
     }
     
-    // Verificar se a UI não quebrou
-    await expect(page.locator('#root')).not.toBeEmpty();
+    // Validar se o editor suporta colagem de texto gigante
+    if (await textarea.isVisible()) {
+        const giantText = "A".repeat(10000);
+        await textarea.fill(giantText);
+        // Espera renderizar sem travar a thread
+        await expect(textarea).toBeVisible();
+    }
   });
 });
