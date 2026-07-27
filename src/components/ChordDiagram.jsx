@@ -73,14 +73,23 @@ export function ChordDiagram({ chordData }) {
 
             {/* Barres */}
             {barres && barres.map((barre, i) => {
-                const relativeFret = barre.fret - baseFret + 1;
-                if (relativeFret < 1) return null;
+                const relativeFret = (barre.fret || 1) - (baseFret || 1) + 1;
+                if (relativeFret < 1 || isNaN(relativeFret)) return null;
+
+                const barreFrom = typeof barre.from === 'number' ? barre.from : 0;
+                const barreTo = typeof barre.to === 'number' ? barre.to : 0;
+                const rectX = gridX + (barreFrom * stringGap) - 6;
+                const rectY = gridY + (relativeFret * fretGap) - 14;
+                const rectWidth = (barreTo - barreFrom) * stringGap + 12;
+
+                if (isNaN(rectX) || isNaN(rectY) || isNaN(rectWidth) || rectWidth <= 0) return null;
+
                 return (
                     <rect
                         key={`barre-${i}`}
-                        x={gridX + (barre.from * stringGap) - 6}
-                        y={gridY + (relativeFret * fretGap) - 14}
-                        width={(barre.to - barre.from) * stringGap + 12}
+                        x={rectX}
+                        y={rectY}
+                        width={rectWidth}
                         height={10}
                         rx={5}
                         className="fill-slate-800 dark:fill-slate-100"

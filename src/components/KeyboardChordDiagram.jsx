@@ -7,14 +7,13 @@ export function KeyboardChordDiagram({ activeKeys, width = 240, height = 120 }) 
         return <div style={{ padding: 10, color: 'red' }}>Acorde não configurado para teclado</div>;
     }
 
-    // A standard piano layout for 2 octaves starting on C
-    // 14 white keys: C, D, E, F, G, A, B | C, D, E, F, G, A, B
-    // 10 black keys (grouped in 2s and 3s)
+    const numWidth = typeof width === 'number' && !isNaN(width) ? width : parseFloat(width) || 240;
+    const numHeight = typeof height === 'number' && !isNaN(height) ? height : parseFloat(height) || 120;
 
     const numWhiteKeys = 14;
-    const whiteKeyWidth = width / numWhiteKeys;
+    const whiteKeyWidth = numWidth / numWhiteKeys;
     const blackKeyWidth = whiteKeyWidth * 0.6;
-    const blackKeyHeight = height * 0.6;
+    const blackKeyHeight = numHeight * 0.6;
 
     // Ordered sequence of all notes in 2 octaves starting from C3
     // Indices: C=0, C#=1, D=2, D#=3, E=4, F=5, F#=6, G=7, G#=8, A=9, A#=10, B=11
@@ -63,16 +62,16 @@ export function KeyboardChordDiagram({ activeKeys, width = 240, height = 120 }) 
             xPos = whiteIndex * whiteKeyWidth;
             whiteIndex++;
             kWidth = whiteKeyWidth;
-            kHeight = height;
+            kHeight = numHeight;
         }
 
         const isActive = activeKeys.includes(key.activeIndex);
 
         return {
             ...key,
-            x: xPos,
-            width: kWidth,
-            height: kHeight,
+            x: isNaN(xPos) ? 0 : xPos,
+            width: isNaN(kWidth) ? 0 : kWidth,
+            height: isNaN(kHeight) ? 0 : kHeight,
             isActive
         };
     });
