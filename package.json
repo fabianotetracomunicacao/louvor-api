@@ -11,7 +11,9 @@
     "backup": "node scripts/backup_db.js",
     "test": "vitest",
     "test:ui": "vitest --ui",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "test:e2e": "playwright test",
+    "test:soak": "node scripts/orchestrator.js"
   },
   "dependencies": {
     "@capacitor/android": "^8.1.0",
@@ -40,6 +42,7 @@
     "@capacitor/assets": "^3.0.5",
     "@capacitor/cli": "^8.1.0",
     "@eslint/js": "^9.39.1",
+    "@playwright/test": "^1.62.0",
     "@testing-library/dom": "^10.4.1",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",

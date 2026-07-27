@@ -35,6 +35,7 @@ import { CompleteProfilePage } from './pages/CompleteProfilePage';
 import { UpdatePasswordPage } from './pages/UpdatePasswordPage';
 import { LandingPage } from './pages/LandingPage';
 import { VisualEditorPage } from './pages/VisualEditorPage';
+import { AdminDiagnosticsPage } from './pages/AdminDiagnosticsPage';
 
 import { LiveSessionProvider } from './contexts/LiveSessionContext';
 import { MaintenanceGuard } from './components/MaintenanceGuard';
@@ -85,6 +86,7 @@ function App() {
                     <Route path="/completar-cadastro" element={<CompleteProfilePage />} />
 
                     {/* Admin Routes */}
+                    <Route path="/admin/diagnostics" element={<AdminDiagnosticsPage />} />
                     <Route path="/admin/users" element={<AdminUsersPage />} />
                     <Route path="/admin/churches" element={<SuperAdminChurchesPage />} />
                     <Route path="/admin/plans" element={<SuperAdminPlansPage />} />

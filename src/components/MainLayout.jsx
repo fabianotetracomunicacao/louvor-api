@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Outlet, NavLink } from 'react-router-dom';
-import { Home, Music, Mic, Settings, User, Sun, Moon, Shield, Search, X, MonitorUp, Maximize, Minimize, BadgeCheck, Calendar, Library, GraduationCap, Church, CreditCard, DollarSign, Globe, Play, SquarePen, Loader2, Info } from 'lucide-react';
+import { Home, Music, Mic, Settings, User, Sun, Moon, Shield, Search, X, MonitorUp, Maximize, Minimize, BadgeCheck, Calendar, Library, GraduationCap, Church, CreditCard, DollarSign, Globe, Play, SquarePen, Loader2, Info, Activity } from 'lucide-react';
 import { searchSongs, getSongBySlug } from '../utils/storage';
 import { parseImporter } from '../utils/importer';
 import { useAuth } from '../contexts/AuthContext';
@@ -410,13 +410,22 @@ export function MainLayout() {
 
                             {/* Admin Links */}
                             {(isChurchAdmin || isSuperAdmin) && (
-                                <NavLink
-                                    to="/admin/church"
-                                    className={({ isActive }) => `p-2 rounded-full transition ${isActive ? 'bg-purple-100 text-purple-600 dark:bg-purple-900/40 dark:text-purple-400' : 'text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-800'}`}
-                                    title="Painel Igreja"
-                                >
-                                    <Shield size={20} />
-                                </NavLink>
+                                <>
+                                    <NavLink
+                                        to="/admin/diagnostics"
+                                        className={({ isActive }) => `p-2 rounded-full transition ${isActive ? 'bg-purple-100 text-purple-600 dark:bg-purple-900/40 dark:text-purple-400' : 'text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-800'}`}
+                                        title="Painel de Diagnósticos & Testes"
+                                    >
+                                        <Activity size={20} />
+                                    </NavLink>
+                                    <NavLink
+                                        to="/admin/church"
+                                        className={({ isActive }) => `p-2 rounded-full transition ${isActive ? 'bg-purple-100 text-purple-600 dark:bg-purple-900/40 dark:text-purple-400' : 'text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-800'}`}
+                                        title="Painel Igreja"
+                                    >
+                                        <Shield size={20} />
+                                    </NavLink>
+                                </>
                             )}
 
                             {isSuperAdmin && (
