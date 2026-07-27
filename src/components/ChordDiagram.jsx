@@ -53,11 +53,30 @@ export function ChordDiagram({ chordData }) {
         return { bRelFret, from, to };
     };
 
+    // Filter barres: Only keep the primary (lowest fret) barre as a rect to avoid double-barre confusion
+    const effectiveBarres = (() => {
+        if (!barres || barres.length === 0) return [];
+        if (barres.length === 1) return barres;
+
+        let primary = barres[0];
+        let minRel = getRelativeFret(typeof primary === 'number' ? primary : (primary.fret || 1));
+
+        for (let i = 1; i < barres.length; i++) {
+            const b = barres[i];
+            const rel = getRelativeFret(typeof b === 'number' ? b : (b.fret || 1));
+            if (rel < minRel) {
+                minRel = rel;
+                primary = b;
+            }
+        }
+        return [primary];
+    })();
+
     // Check if a fret dot is redundant because a barre finger already holds it down
     const isNoteCoveredByBarre = (fretVal, stringIndex) => {
-        if (!barres || barres.length === 0 || fretVal <= 0) return false;
+        if (!effectiveBarres || effectiveBarres.length === 0 || fretVal <= 0) return false;
         const relFret = getRelativeFret(fretVal);
-        return barres.some(b => {
+        return effectiveBarres.some(b => {
             const bounds = getBarreBounds(b);
             if (!bounds) return false;
             return bounds.bRelFret === relFret && stringIndex >= bounds.from && stringIndex <= bounds.to;
@@ -118,7 +137,7 @@ export function ChordDiagram({ chordData }) {
             ))}
 
             {/* Barres */}
-            {barres && barres.map((barre, i) => {
+            {effectiveBarres && effectiveBarres.map((barre, i) => {
                 const bounds = getBarreBounds(barre);
                 if (!bounds) return null;
 
