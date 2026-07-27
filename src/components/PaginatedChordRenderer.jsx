@@ -553,7 +553,7 @@ function LineRenderer({ line, isBold, isTab, block, fontSize, tabFontSize, lineS
                     minHeight: hasChords && !isChordOnlyLine ? `calc(${chordHeight} + ${lyricHeight})` : 'auto',
                     lineHeight: 1,
                     letterSpacing: `${letterSpacing}px`,
-                    marginBottom: isChordOnlyLine ? '2px' : '0'
+                    marginBottom: isChordOnlyLine ? `${((lineSpacing || 1) * 0.2).toFixed(2)}em` : `${((lineSpacing || 1) * 0.4).toFixed(2)}em`
                 }}
             >
                 {segments.map((seg, i) => {

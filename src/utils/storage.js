@@ -2453,6 +2453,7 @@ export async function saveUserSongPreference(songId, updates) {
         .select('*')
         .eq('user_id', user.id)
         .eq('song_id', songId);
+    const existing = (existingArr && existingArr[0]) || {};
     const { id, created_at, ...cleanExisting } = existing;
 
     const merged = {

@@ -13,7 +13,7 @@ import { useNotification } from '../contexts/NotificationContext';
 import { saveSong, getSongById, getUserSongPreference, saveUserSongPreference, checkDuplicateSongs } from '../utils/storage';
 import { Portal } from '../components/Portal';
 import { SongSearchModal } from '../components/SongSearchModal';
-import { transposeSong, getTransposedNote, detectKeyFromContent } from '../utils/transposition';
+import { transposeSong, getTransposedNote, detectKeyFromContent, ALL_KEYS } from '../utils/transposition';
 import { ChordProRenderer } from '../components/ChordRenderer';
 import { extractSlides } from '../utils/lyricsParser';
 import { parseImporter, exportToVisual, isChordLine, isTabLine } from '../utils/importer';
@@ -1142,12 +1142,29 @@ export function EditorPage() {
                                         setOriginalKey(e.target.value);
                                         handleTranspositionChange(0); // Reset transposition when base key changes to align them
                                     }}
-                                    className="bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-300 text-xs border border-slate-200 dark:border-slate-700 rounded p-1"
+                                    className="bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-300 text-xs border border-slate-200 dark:border-slate-700 rounded p-1 font-bold"
                                 >
-                                    {['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B', 'Cm', 'C#m', 'Dm', 'D#m', 'Em', 'Fm', 'F#m', 'Gm', 'G#m', 'Am', 'A#m', 'Bm'].map(note => (
+                                    {ALL_KEYS.map(note => (
                                         <option key={note} value={note}>{note}</option>
                                     ))}
                                 </select>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        const detected = detectKeyFromContent(content);
+                                        if (detected) {
+                                            setOriginalKey(detected);
+                                            showToast(`Tom detectado: ${detected}`, 'success');
+                                        } else {
+                                            showToast('Não foi possível identificar o tom automaticamente.', 'info');
+                                        }
+                                    }}
+                                    className="flex items-center gap-1.5 px-2.5 py-1 bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 rounded text-xs font-bold hover:bg-purple-200 dark:hover:bg-purple-900/50 transition shrink-0 ml-1"
+                                    title="Analisar tom da cifra automaticamente"
+                                >
+                                    <Sparkles size={13} />
+                                    <span>Analisar Tom</span>
+                                </button>
                             </div>
                         )}
 
