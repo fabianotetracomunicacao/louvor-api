@@ -516,6 +516,7 @@ export async function saveSong(songData) {
 
 function clearAllListCaches() {
     try {
+        songMemoryCache.clear();
         const keysToRemove = [];
         for (let i = 0; i < localStorage.length; i++) {
             const key = localStorage.key(i);
@@ -2881,6 +2882,9 @@ export async function updateSongOriginalKey(songId, newKey, newContent) {
         console.error("Error updating original key:", error);
         return false;
     }
+
+    songMemoryCache.delete(String(songId));
+    clearAllListCaches();
     return true;
 }
 
