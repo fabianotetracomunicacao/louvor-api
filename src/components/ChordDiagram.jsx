@@ -24,7 +24,7 @@ export function ChordDiagram({ chordData }) {
         baseFret = minFret;
     }
 
-    // Helper to compute relative fret position within the 4-fret diagram
+    // Calculate relative fret for notes and barres
     const getRelativeFret = (fretVal) => {
         if (!fretVal || fretVal <= 0) return 0;
         if ((chordData.baseFret || 1) > 1) {
@@ -33,16 +33,34 @@ export function ChordDiagram({ chordData }) {
         return fretVal - baseFret + 1;
     };
 
+    // Calculate precise starting and ending strings for a barre
+    const getBarreBounds = (barre) => {
+        const bFret = typeof barre === 'number' ? barre : (barre.fret || 1);
+        const bRelFret = getRelativeFret(bFret);
+        
+        let from = typeof barre.from === 'number' ? barre.from : null;
+        let to = typeof barre.to === 'number' ? barre.to : null;
+
+        if (from === null || to === null) {
+            const barredStrings = [0, 1, 2, 3, 4, 5].filter(s => frets[s] > 0 && getRelativeFret(frets[s]) === bRelFret);
+            if (barredStrings.length >= 2) {
+                from = Math.min(...barredStrings);
+                to = Math.max(...barredStrings);
+            } else {
+                return null; // Not a multi-string barre
+            }
+        }
+        return { bRelFret, from, to };
+    };
+
     // Check if a fret dot is redundant because a barre finger already holds it down
     const isNoteCoveredByBarre = (fretVal, stringIndex) => {
         if (!barres || barres.length === 0 || fretVal <= 0) return false;
         const relFret = getRelativeFret(fretVal);
         return barres.some(b => {
-            const bFret = typeof b === 'number' ? b : (b.fret || 1);
-            const bRelFret = getRelativeFret(bFret);
-            const bFrom = typeof b.from === 'number' ? b.from : 0;
-            const bTo = typeof b.to === 'number' ? b.to : 5;
-            return bRelFret === relFret && stringIndex >= bFrom && stringIndex <= bTo;
+            const bounds = getBarreBounds(b);
+            if (!bounds) return false;
+            return bounds.bRelFret === relFret && stringIndex >= bounds.from && stringIndex <= bounds.to;
         });
     };
 
@@ -101,14 +119,14 @@ export function ChordDiagram({ chordData }) {
 
             {/* Barres */}
             {barres && barres.map((barre, i) => {
-                const bFret = typeof barre === 'number' ? barre : (barre.fret || 1);
-                const relativeFret = getRelativeFret(bFret);
-                if (relativeFret < 1 || isNaN(relativeFret)) return null;
+                const bounds = getBarreBounds(barre);
+                if (!bounds) return null;
 
-                const barreFrom = typeof barre.from === 'number' ? barre.from : 0;
-                const barreTo = typeof barre.to === 'number' ? barre.to : 5;
+                const { bRelFret, from: barreFrom, to: barreTo } = bounds;
+                if (bRelFret < 1 || isNaN(bRelFret)) return null;
+
                 const rectX = gridX + (barreFrom * stringGap) - 6;
-                const rectY = gridY + (relativeFret * fretGap) - 14;
+                const rectY = gridY + (bRelFret * fretGap) - 14;
                 const rectWidth = (barreTo - barreFrom) * stringGap + 12;
 
                 if (isNaN(rectX) || isNaN(rectY) || isNaN(rectWidth) || rectWidth <= 0) return null;
