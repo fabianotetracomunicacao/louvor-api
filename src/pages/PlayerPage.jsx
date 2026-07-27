@@ -754,7 +754,7 @@ export function PlayerPage() {
                     : (initialTransposition !== undefined ? initialTransposition : 0);
 
                 // Phase 3: Sync Visual Preferences
-                const songFontSize = isMobile ? songPrefs?.mobile_font_size : (isTablet ? songPrefs?.tablet_font_size : songPrefs?.desktop_font_size);
+                const songFontSize = (isMobile ? songPrefs?.mobile_font_size : (isTablet ? songPrefs?.tablet_font_size : songPrefs?.desktop_font_size)) || songPrefs?.font_size;
                 const songTabFontSize = isMobile ? songPrefs?.mobile_tab_font_size : (isTablet ? songPrefs?.tablet_tab_font_size : songPrefs?.desktop_tab_font_size);
                 const songLineSpacing = isMobile ? songPrefs?.mobile_line_spacing : (isTablet ? songPrefs?.tablet_line_spacing : songPrefs?.desktop_line_spacing);
                 const songScrollSpeed = isMobile ? songPrefs?.mobile_scroll_speed : (isTablet ? songPrefs?.tablet_scroll_speed : songPrefs?.desktop_scroll_speed);
@@ -843,6 +843,7 @@ export function PlayerPage() {
                 payload.desktop_scroll_speed = scrollSpeed;
                 payload.desktop_letter_spacing = letterSpacing;
             }
+            payload.font_size = Math.round(fontSize);
 
             saveUserSongPreference(songId, payload);
         }, 1000); // 1s debounce

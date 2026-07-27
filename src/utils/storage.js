@@ -653,11 +653,63 @@ export async function deleteSong(id) {
  * @returns {Promise<string>} New Song ID
  */
 export async function copySong(songId) {
-    const { data, error } = await supabase
-        .rpc('copy_song', { source_id: songId });
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) throw new Error("Faça login para copiar a música.");
 
-    if (error) throw error;
-    return data;
+    // Fetch original song
+    const { data: sourceSong, error: fetchErr } = await supabase
+        .from('songs')
+        .select('*')
+        .eq('id', songId)
+        .single();
+
+    if (fetchErr || !sourceSong) throw new Error("Música original não encontrada.");
+
+    // Check if user already copied this exact song
+    const { data: existingCopy } = await supabase
+        .from('songs')
+        .select('id')
+        .eq('created_by', user.id)
+        .eq('original_song_id', songId)
+        .maybeSingle();
+
+    if (existingCopy) {
+        return existingCopy.id;
+    }
+
+    const copyPayload = {
+        title: sourceSong.title,
+        artist: sourceSong.artist,
+        content: sourceSong.content,
+        original_key: sourceSong.original_key,
+        font_size: sourceSong.font_size,
+        tab_font_size: sourceSong.tab_font_size,
+        line_spacing: sourceSong.line_spacing,
+        style: sourceSong.style,
+        functions: sourceSong.functions,
+        tags: sourceSong.tags,
+        youtube_links: sourceSong.youtube_links,
+        duration: sourceSong.duration,
+        projection_content: sourceSong.projection_content,
+        type: sourceSong.type || 'chords',
+        proj_bg_type: sourceSong.proj_bg_type,
+        proj_bg_url: sourceSong.proj_bg_url,
+        proj_font_size: sourceSong.proj_font_size,
+        is_official: false,
+        created_by: user.id,
+        original_song_id: songId
+    };
+
+    const { data: inserted, error: insertErr } = await supabase
+        .from('songs')
+        .insert([copyPayload])
+        .select()
+        .single();
+
+    if (insertErr) throw insertErr;
+
+    clearAllListCaches();
+    return inserted.id;
 }
 
 
@@ -2375,13 +2427,13 @@ export async function saveUserSongPreference(songId, updates) {
         .select('*')
         .eq('user_id', user.id)
         .eq('song_id', songId);
-    const existing = (existingArr && existingArr[0]) || {};
+    const { id, created_at, ...cleanExisting } = existing;
 
     const merged = {
         user_id: user.id,
         song_id: songId,
         updated_at: new Date().toISOString(),
-        ...existing,
+        ...cleanExisting,
         ...payload
     };
 
@@ -2390,8 +2442,8 @@ export async function saveUserSongPreference(songId, updates) {
         .upsert(merged, { onConflict: 'user_id, song_id' });
     if (error) console.error('Error saving song preference:', error);
 
-    // Update localStorage cache immediately so next open is instant
-    saveToCache(`song_pref_${user.id}_${songId} `, merged);
+    // Update localStorage cache immediately so next open is instant (fixed key without trailing space)
+    saveToCache(`song_pref_${user.id}_${songId}`, merged);
 }
 
 

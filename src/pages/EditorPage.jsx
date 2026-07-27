@@ -304,7 +304,12 @@ export function EditorPage() {
 
             if (savedSong?.id) {
                 try {
-                    await saveUserSongPreference(savedSong.id, transposition);
+                    await saveUserSongPreference(savedSong.id, {
+                        transposition: transposition,
+                        font_size: fontSize,
+                        mobile_font_size: fontSize,
+                        desktop_font_size: fontSize
+                    });
                 } catch (prefErr) {
                     console.warn("Could not save transposition pref, but song was saved:", prefErr);
                 }

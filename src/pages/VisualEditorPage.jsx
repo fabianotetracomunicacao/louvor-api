@@ -6,7 +6,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useNotification } from '../contexts/NotificationContext';
-import { getSongById, saveSong } from '../utils/storage';
+import { getSongById, saveSong, saveUserSongPreference } from '../utils/storage';
 import { useVisualSync } from '../hooks/useVisualSync';
 import { VisualLine } from '../components/VisualEditor/VisualLine';
 
@@ -239,7 +239,18 @@ export function VisualEditorPage() {
         };
 
         try {
-            await saveSong(songData);
+            const savedSong = await saveSong(songData);
+            if (savedSong?.id || songId) {
+                try {
+                    await saveUserSongPreference(savedSong?.id || songId, {
+                        font_size: fontSize,
+                        mobile_font_size: fontSize,
+                        desktop_font_size: fontSize
+                    });
+                } catch (e) {
+                    console.warn("Could not save font size pref:", e);
+                }
+            }
             showToast('Música salva com sucesso!', 'success');
         } catch (error) {
             console.error(error);

@@ -149,22 +149,45 @@ export function RepertoirePage() {
         }
     };
 
+    const checkIsOfficial = (s) => {
+        if (!s) return false;
+        if (s.isOfficial === true || s.is_official === true) return true;
+        if (s.creatorName && (s.creatorName.includes('Oficial') || s.creatorName.includes('LouvorPlay'))) return true;
+        if (s.creator && (s.creator.full_name?.includes('Oficial') || s.creator.email?.includes('louvorplay'))) return true;
+        return false;
+    };
+
     const groupSongsByTitleAndArtist = (songList) => {
         if (!songList || songList.length === 0) return [];
         const groups = new Map();
 
         songList.forEach(song => {
             const key = `${song.title?.toLowerCase().trim()}--${song.artist?.toLowerCase().trim()}`;
+            const songIsOfficial = checkIsOfficial(song);
+
             if (!groups.has(key)) {
                 groups.set(key, { id: key, main: song, versions: [] });
             } else {
                 const group = groups.get(key);
-                // Prefer official songs as the main entry
-                if (song.isOfficial && !group.main.isOfficial) {
+                const mainIsOfficial = checkIsOfficial(group.main);
+
+                if (songIsOfficial && !mainIsOfficial) {
                     group.versions.push(group.main);
                     group.main = song;
                 } else {
                     group.versions.push(song);
+                }
+            }
+        });
+
+        // Post-process guarantee: If any group main is not official but contains an official version, swap it!
+        groups.forEach((group) => {
+            if (!checkIsOfficial(group.main) && group.versions.length > 0) {
+                const officialIdx = group.versions.findIndex(checkIsOfficial);
+                if (officialIdx !== -1) {
+                    const officialSong = group.versions.splice(officialIdx, 1)[0];
+                    group.versions.push(group.main);
+                    group.main = officialSong;
                 }
             }
         });
