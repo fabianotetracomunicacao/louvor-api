@@ -275,6 +275,40 @@ export async function fetchChordData(chordName) {
         return result;
     }
 
+    // Fallback 1: Slash chords (e.g. Ab/C -> Ab)
+    if (chordName.includes('/')) {
+        const slashIndex = chordName.indexOf('/');
+        const baseChordName = chordName.slice(0, slashIndex);
+        if (baseChordName && baseChordName !== chordName) {
+            const baseData = await fetchChordData(baseChordName);
+            if (baseData) {
+                const result = {
+                    ...baseData,
+                    name: chordName
+                };
+                chordCache[chordName] = result;
+                return result;
+            }
+        }
+    }
+
+    // Fallback 2: Complex extensions to basic root chord (e.g. Ab9 -> Ab, Abm7 -> Abm)
+    if (rawSuffix && rawSuffix !== 'm' && rawSuffix !== 'minor' && rawSuffix !== 'major') {
+        const baseType = (rawSuffix.startsWith('m') && !rawSuffix.startsWith('maj')) ? 'm' : '';
+        const rootChordName = rawRoot + baseType;
+        if (rootChordName !== chordName) {
+            const rootData = await fetchChordData(rootChordName);
+            if (rootData) {
+                const result = {
+                    ...rootData,
+                    name: chordName
+                };
+                chordCache[chordName] = result;
+                return result;
+            }
+        }
+    }
+
     return null;
 }
 
@@ -287,11 +321,6 @@ export function getChordData(chordName) {
     if (!chordName) return null;
     if (chordCache[chordName]) return chordCache[chordName];
 
-    // Fallback to purely local lookup (duplicate logic of findInDb roughly)
-    // ... logic from before ...
-    // Since we are moving to async, this might return null often if not cached. 
-    // Better to just reimplement the exact old logic here as fallback.
-
     const match = chordName.match(/^([A-G][#b]?)(.*)$/);
     if (!match) return null;
 
@@ -299,38 +328,69 @@ export function getChordData(chordName) {
     const rawSuffix = match[2];
     const dbKey = normalizeRoot(rawRoot);
 
-    if (!guitarDb.chords[dbKey]) return null;
+    if (guitarDb.chords[dbKey]) {
+        // Quick attempt
+        let lookupSuffix = normalizeSuffix(rawSuffix);
+        let entry = guitarDb.chords[dbKey].find(c => c.suffix === lookupSuffix);
 
-    // Quick attempt
-    let lookupSuffix = normalizeSuffix(rawSuffix);
-    let entry = guitarDb.chords[dbKey].find(c => c.suffix === lookupSuffix);
+        if (!entry) {
+            // Slash check
+            const slashMatch = rawSuffix.match(/^(.*?)\/([A-G][#b]?)$/);
+            if (slashMatch) {
+                const bass = slashMatch[2];
+                entry = guitarDb.chords[dbKey].find(c => c.suffix === `/${bass}` || c.suffix === `major/${bass}` || c.suffix === `minor/${bass}` || c.suffix === `m/${bass}`);
+            }
+        }
 
-    if (!entry) {
-        // Slash check
-        const slashMatch = rawSuffix.match(/^(.*?)\/([A-G][#b]?)$/);
-        if (slashMatch) {
-            // ... simplify ...
-            const bass = slashMatch[2];
-            // Try common patterns
-            entry = guitarDb.chords[dbKey].find(c => c.suffix === `/${bass}` || c.suffix === `major/${bass}` || c.suffix === `minor/${bass}` || c.suffix === `m/${bass}`);
+        if (entry) {
+            const result = {
+                name: chordName,
+                positions: entry.positions.map(pos => ({
+                    frets: pos.frets,
+                    barres: pos.barres,
+                    capo: pos.capo,
+                    baseFret: pos.baseFret || 1,
+                    fingers: pos.fingers
+                }))
+            };
+            chordCache[chordName] = result;
+            return result;
         }
     }
 
-    if (entry) {
-        const result = {
-            name: chordName,
-            positions: entry.positions.map(pos => ({
-                frets: pos.frets,
-                barres: pos.barres,
-                capo: pos.capo,
-                baseFret: pos.baseFret || 1,
-                fingers: pos.fingers
-            }))
-        };
-        chordCache[chordName] = result;
-        return result;
+    // Fallback 1 for getChordData: Slash chords (e.g. Ab/C -> Ab)
+    if (chordName.includes('/')) {
+        const slashIndex = chordName.indexOf('/');
+        const baseChordName = chordName.slice(0, slashIndex);
+        if (baseChordName && baseChordName !== chordName) {
+            const baseData = getChordData(baseChordName);
+            if (baseData) {
+                const result = {
+                    ...baseData,
+                    name: chordName
+                };
+                chordCache[chordName] = result;
+                return result;
+            }
+        }
     }
 
-    // If not found locally, return null (caller might rely on async later)
+    // Fallback 2 for getChordData: Complex extensions (e.g. Ab9 -> Ab, Abm7 -> Abm)
+    if (rawSuffix && rawSuffix !== 'm' && rawSuffix !== 'minor' && rawSuffix !== 'major') {
+        const baseType = (rawSuffix.startsWith('m') && !rawSuffix.startsWith('maj')) ? 'm' : '';
+        const rootChordName = rawRoot + baseType;
+        if (rootChordName !== chordName) {
+            const rootData = getChordData(rootChordName);
+            if (rootData) {
+                const result = {
+                    ...rootData,
+                    name: chordName
+                };
+                chordCache[chordName] = result;
+                return result;
+            }
+        }
+    }
+
     return null;
 }
