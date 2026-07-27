@@ -17,7 +17,7 @@ const backupPath = path.join(backupDir, `snapshot-${timestamp}.json`);
 const metadata = {
     timestamp: new Date().toISOString(),
     project: 'LouvorPlay',
-    supabaseUrl: 'https://hqhjhnjauuyxithgeens.supabase.co',
+    supabaseUrl: 'https://jthvbixdlkrbeztqqqkx.supabase.co',
     status: 'Lightweight local project backup snapshot created successfully'
 };
 
