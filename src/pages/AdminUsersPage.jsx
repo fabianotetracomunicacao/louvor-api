@@ -119,7 +119,7 @@ export function AdminUsersPage() {
                 .from('profiles')
                 .select(`
                     *,
-                    memberships:church_user_memberships(churches(name)),
+                    memberships:church_user_memberships!church_user_memberships_user_id_fkey(churches(name)),
                     subs:subscriptions!user_id(status, plans(name, type))
                 `)
                 .order('created_at', { ascending: false });
