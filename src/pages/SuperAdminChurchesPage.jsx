@@ -151,7 +151,7 @@ export function SuperAdminChurchesPage() {
             // Force local refresh of members
             const { data: membersObj } = await supabase
                 .from('church_user_memberships')
-                .select('id, status, role, profiles(name,email)')
+                .select('id, status, role, profiles!church_user_memberships_user_id_fkey(name,email)')
                 .eq('church_id', selectedChurchDetails.id);
                 
             if(membersObj) {
@@ -172,7 +172,7 @@ export function SuperAdminChurchesPage() {
         try {
             const [churchRes, planRes] = await Promise.all([
                 supabase.from('churches')
-                    .select('*, plan:plans(*), memberships:church_user_memberships(id, status, role, profiles(name, email))')
+                    .select('*, plan:plans(*), memberships:church_user_memberships(id, status, role, profiles!church_user_memberships_user_id_fkey(name, email))')
                     .order('created_at', { ascending: false }),
                 supabase.from('plans').select('*').eq('active', true).eq('type', 'church')
             ]);
@@ -899,7 +899,7 @@ export function SuperAdminChurchesPage() {
                                                                         // Force local refresh without closing modal
                                                                         const { data: membersObj } = await supabase
                                                                             .from('church_user_memberships')
-                                                                            .select('id, status, role, profiles(name,email)')
+                                                                            .select('id, status, role, profiles!church_user_memberships_user_id_fkey(name,email)')
                                                                             .eq('church_id', selectedChurchDetails.id);
                                                                             
                                                                         if(membersObj) {

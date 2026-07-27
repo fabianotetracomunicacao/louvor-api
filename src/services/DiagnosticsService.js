@@ -275,11 +275,9 @@ export class DiagnosticsService {
         .select('*')
         .order('created_at', { ascending: false })
         .limit(1)
-        .single();
+        .maybeSingle();
         
-      if (error && error.code !== 'PGRST116') { // PGRST116 is "No rows found"
-        throw error;
-      }
+      if (error) throw error;
       return data || null;
     } catch (err) {
       console.error('Erro ao buscar o relatório E2E:', err);

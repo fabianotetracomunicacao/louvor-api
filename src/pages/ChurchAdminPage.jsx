@@ -52,7 +52,7 @@ export function ChurchAdminPage() {
     const loadMembers = async () => {
         const { data, error } = await supabase
             .from('church_user_memberships')
-            .select('*, profile: profiles(*)')
+            .select('*, profile: profiles!church_user_memberships_user_id_fkey(*)')
             .eq('church_id', activeChurch.id)
             .order('role', { ascending: true });
 
