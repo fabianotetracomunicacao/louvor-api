@@ -86,16 +86,16 @@ function App() {
                     <Route path="/completar-cadastro" element={<CompleteProfilePage />} />
 
                     {/* Admin Routes */}
-                    <Route path="/admin/diagnostics" element={<AdminDiagnosticsPage />} />
-                    <Route path="/admin/users" element={<AdminUsersPage />} />
-                    <Route path="/admin/churches" element={<SuperAdminChurchesPage />} />
-                    <Route path="/admin/plans" element={<SuperAdminPlansPage />} />
-                    <Route path="/admin/reports" element={<AdminReportsPage />} />
-                    <Route path="/admin/review" element={<AdminContentReviewPage />} />
-                    <Route path="/admin/financials" element={<AdminFinancialsPage />} />
-                    <Route path="/admin/metadata" element={<AdminMetadataPage />} />
-                    <Route path="/admin/trash" element={<AdminTrashPage />} />
-                    <Route path="/admin/church" element={<ChurchAdminPage />} />
+                    <Route path="/admin/diagnostics" element={<SuperAdminRoute><AdminDiagnosticsPage /></SuperAdminRoute>} />
+                    <Route path="/admin/users" element={<AdminRoute><AdminUsersPage /></AdminRoute>} />
+                    <Route path="/admin/churches" element={<SuperAdminRoute><SuperAdminChurchesPage /></SuperAdminRoute>} />
+                    <Route path="/admin/plans" element={<SuperAdminRoute><SuperAdminPlansPage /></SuperAdminRoute>} />
+                    <Route path="/admin/reports" element={<SuperAdminRoute><AdminReportsPage /></SuperAdminRoute>} />
+                    <Route path="/admin/review" element={<SuperAdminRoute><AdminContentReviewPage /></SuperAdminRoute>} />
+                    <Route path="/admin/financials" element={<SuperAdminRoute><AdminFinancialsPage /></SuperAdminRoute>} />
+                    <Route path="/admin/metadata" element={<SuperAdminRoute><AdminMetadataPage /></SuperAdminRoute>} />
+                    <Route path="/admin/trash" element={<SuperAdminRoute><AdminTrashPage /></SuperAdminRoute>} />
+                    <Route path="/admin/church" element={<AdminRoute><ChurchAdminPage /></AdminRoute>} />
                   </Route>
 
                   {/* Projector Route - Independent of MainLayout */}

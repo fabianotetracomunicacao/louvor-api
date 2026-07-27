@@ -1,5 +1,4 @@
 import { supabase } from '../supabaseClient';
-import { v4 as uuidv4 } from 'uuid';
 
 export const InvitationService = {
     /**
@@ -78,7 +77,7 @@ export const InvitationService = {
             throw new Error(`Limite do plano atingido para esta função (${capacity.limit} vagas).`);
         }
 
-        const token = uuidv4();
+        const token = crypto.randomUUID();
         const expiresAt = new Date();
         expiresAt.setDate(expiresAt.getDate() + 7); // 7 days expiry
 
@@ -97,9 +96,6 @@ export const InvitationService = {
             .single();
 
         if (error) throw error;
-
-        // MOCK EMAIL SENDING
-        console.log(`[InvitationService] Email mock: Enviando convite para ${email}. Link: /join/${token}`);
         
         return data;
     },
@@ -161,8 +157,13 @@ export const InvitationService = {
     /**
      * Accepts an invitation
      */
-    async acceptInvitation(token, userId) {
+    async acceptInvitation(token, userId, userEmail = null) {
         const invite = await this.getInvitationMetadata(token);
+
+        // Validate user email against invited email if provided
+        if (invite.email && userEmail && invite.email.toLowerCase().trim() !== userEmail.toLowerCase().trim()) {
+            throw new Error(`Este convite foi enviado para ${invite.email}. Faça login com esta conta para aceitá-lo.`);
+        }
 
         // 1. Double check capacity just in case
         const capacity = await this.checkCapacity(invite.church_id, invite.role);

@@ -190,8 +190,9 @@ export const LiveSessionProvider = ({ children }) => {
     // Disconnect when leaving player/projector routes
     useEffect(() => {
         if (isLiveRef.current &&
-            !location.pathname.startsWith('/player/') &&
-            !location.pathname.startsWith('/projetor/')) {
+            !location.pathname.startsWith('/player') &&
+            !location.pathname.startsWith('/projector') &&
+            !location.pathname.startsWith('/projetor')) {
             disconnectFromSession();
         }
     }, [location.pathname, disconnectFromSession]);

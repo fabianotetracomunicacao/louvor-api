@@ -39,3 +39,27 @@ export function ProtectedRoute({ children }) {
     // User is authenticated and active, render the protected content
     return children;
 }
+
+export function AdminRoute({ children }) {
+    const { isChurchAdmin, isSuperAdmin, loading } = useAuth();
+
+    if (loading) return null;
+
+    if (!isChurchAdmin && !isSuperAdmin) {
+        return <Navigate to="/dashboard" replace />;
+    }
+
+    return children;
+}
+
+export function SuperAdminRoute({ children }) {
+    const { isSuperAdmin, loading } = useAuth();
+
+    if (loading) return null;
+
+    if (!isSuperAdmin) {
+        return <Navigate to="/dashboard" replace />;
+    }
+
+    return children;
+}

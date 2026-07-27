@@ -23,6 +23,11 @@ yarn-error.log*
 # Ignored assets and backups
 *.zip
 *.tar.gz
+*.csv
+*.sql
+data_dump.sql
+exported_users.csv
+pass.md
 .backups/
 Fotos de fundo/
 Vídeos capa fundo/
