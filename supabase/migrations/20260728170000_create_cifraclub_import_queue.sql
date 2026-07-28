@@ -31,10 +31,7 @@ create table public.cifraclub_import_items (
   claim_token uuid,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  check (
-    (status = 'imported' and song_id is not null)
-    or (status <> 'imported' and song_id is null)
-  ),
+  check (status = 'imported' or song_id is null),
   unique (job_id, song_slug)
 );
 

@@ -44,12 +44,16 @@ requirePattern(
 );
 
 requirePattern(
-  /check \(\s*\(status = 'imported' and song_id is not null\)\s*or \(status <> 'imported' and song_id is null\)\s*\)/s,
-  'song_id integrity for imported and non-imported states'
+  /check \(status = 'imported' or song_id is null\)/,
+  'historical imported rows without a song after ON DELETE SET NULL'
 );
 requirePattern(
-  /if \(p_status = 'imported' and p_song_id is null\)\s+or \(p_status <> 'imported' and p_song_id is not null\) then/s,
-  'finish-time song_id validation'
+  /if \(p_status = 'imported' and p_song_id is null\)/,
+  'finish RPC rejection of imported without a song ID'
+);
+requirePattern(
+  /p_status <> 'imported' and p_song_id is not null/,
+  'finish-time rejection of song_id for non-imported states'
 );
 
 console.log('cifraclub import queue static validation: PASS');
