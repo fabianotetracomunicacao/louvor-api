@@ -20,8 +20,8 @@ export function AdminDiagnosticsPage() {
     DiagnosticsService.fetchLatestE2EReport().then(setLatestE2EReport);
   }, []);
 
-  // Restringe acesso a administradores
-  if (!isSuperAdmin && !isChurchAdmin) {
+  // Restringe acesso estritamente a Super Admins
+  if (!isSuperAdmin) {
     return <Navigate to="/dashboard" replace />;
   }
 

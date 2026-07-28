@@ -410,6 +410,16 @@ export function MainLayout() {
 
                             {/* Admin Links */}
                             {(isChurchAdmin || isSuperAdmin) && (
+                                <NavLink
+                                    to="/admin/church"
+                                    className={({ isActive }) => `p-2 rounded-full transition ${isActive ? 'bg-purple-100 text-purple-600 dark:bg-purple-900/40 dark:text-purple-400' : 'text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-800'}`}
+                                    title="Painel Igreja"
+                                >
+                                    <Shield size={20} />
+                                </NavLink>
+                            )}
+
+                            {isSuperAdmin && (
                                 <>
                                     <NavLink
                                         to="/admin/diagnostics"
@@ -418,18 +428,6 @@ export function MainLayout() {
                                     >
                                         <Activity size={20} />
                                     </NavLink>
-                                    <NavLink
-                                        to="/admin/church"
-                                        className={({ isActive }) => `p-2 rounded-full transition ${isActive ? 'bg-purple-100 text-purple-600 dark:bg-purple-900/40 dark:text-purple-400' : 'text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-800'}`}
-                                        title="Painel Igreja"
-                                    >
-                                        <Shield size={20} />
-                                    </NavLink>
-                                </>
-                            )}
-
-                            {isSuperAdmin && (
-                                <>
                                     <NavLink
                                         to="/admin/churches"
                                         className={({ isActive }) => `p-2 rounded-full transition ${isActive ? 'bg-purple-100 text-purple-600 dark:bg-purple-900/40 dark:text-purple-400' : 'text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-800'}`}
@@ -505,7 +503,7 @@ export function MainLayout() {
                                                 {(userProfile.full_name || userProfile.name || '').split(' ')[0]}
                                             </p>
                                             <p className="text-[10px] font-bold text-slate-400 uppercase mt-0.5 leading-none">
-                                                {isSuperAdmin ? 'Super Admin' : isChurchAdmin ? 'Admin' : isWorshipLeader ? 'Líder de Adoração' : 'Membro'}
+                                                {isSuperAdmin ? 'Super Admin' : isChurchAdmin ? 'Responsável' : isWorshipLeader ? 'Líder de Adoração' : 'Adorador'}
                                             </p>
                                         </div>
                                         <div className="w-9 h-9 rounded-full bg-purple-600 p-0.5 shadow-lg shadow-purple-600/20">
