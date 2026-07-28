@@ -432,7 +432,7 @@ export default function ProjectorControlPage() {
                     return prev;
                 });
                 break;
-            case 'SELECT_PLAYLIST_ITEM':
+            case 'SELECT_PLAYLIST_ITEM': {
                 const itemIndex = payload.index;
                 if (selectedPlaylist?.items?.[itemIndex]) {
                     const song = selectedPlaylist.items[itemIndex].song;
@@ -452,7 +452,8 @@ export default function ProjectorControlPage() {
                     // Note: syncToDisplay will be triggered by setActiveSongIndex change in useEffect
                 }
                 break;
-            case 'SELECT_SLIDE':
+            }
+            case 'SELECT_SLIDE': {
                 const targetSlideIndex = payload.index;
                 const targetSongIndex = payload.songIndex !== undefined ? payload.songIndex : activeSongIndex;
 
@@ -474,6 +475,7 @@ export default function ProjectorControlPage() {
                     setLiveSlideIndex(targetSlideIndex);
                 }
                 break;
+            }
             case 'CLEAR_SLIDE':
                 handleLiveSlideChange(-1);
                 break;
@@ -2051,7 +2053,7 @@ export default function ProjectorControlPage() {
                                         onChange={e => {
                                             const v = parseInt(e.target.value);
                                             setSlidePreviewSize(v);
-                                            try { localStorage.setItem('slidePreviewSize', String(v)); } catch {}
+                                            try { localStorage.setItem('slidePreviewSize', String(v)); } catch (_err) { /* ignore */ }
                                         }}
                                         className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer dark:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-purple-500"
                                         style={{ accentColor: '#9333ea' }}

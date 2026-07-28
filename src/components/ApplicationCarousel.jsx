@@ -9,17 +9,18 @@ export function ApplicationCarousel({ onSelect }) {
     const [isHovered, setIsHovered] = useState(false);
 
     useEffect(() => {
-        loadFunctions();
+        let isMounted = true;
+        getSongFunctions().then((data) => {
+            if (!isMounted) return;
+            if (data) {
+                setFunctions(data.sort((a, b) => a.name.localeCompare(b.name)));
+            }
+            setLoading(false);
+        });
+        return () => {
+            isMounted = false;
+        };
     }, []);
-
-    const loadFunctions = async () => {
-        const data = await getSongFunctions();
-        if (data) {
-            // Sort by name or predefined logic? 
-            setFunctions(data.sort((a,b) => a.name.localeCompare(b.name)));
-        }
-        setLoading(false);
-    };
 
     // Auto-scroll logic
     useEffect(() => {

@@ -55,7 +55,7 @@ export function SetlistManager({ playlistId, songs, onClose, onSave, initialData
             ]).then(async ([members, { data: playlistData }, instruments]) => {
                 setInstrumentsMetadata(instruments);
 
-                let allMembers = members.map(m => ({
+                let rawMembers = members.map(m => ({
                     id: m.user_id,
                     name: m.profile?.name || m.profile?.email,
                     email: m.profile?.email,
@@ -66,7 +66,7 @@ export function SetlistManager({ playlistId, songs, onClose, onSave, initialData
 
                 // Fetch Owner Profile if exists and not already in list
                 if (playlistData?.owner_id) {
-                    const isOwnerAlreadyAdded = allMembers.some(m => m.id === playlistData.owner_id);
+                    const isOwnerAlreadyAdded = rawMembers.some(m => m.id === playlistData.owner_id);
                     if (!isOwnerAlreadyAdded) {
                         const { data: ownerProfile } = await supabase
                             .from('profiles')
@@ -75,7 +75,7 @@ export function SetlistManager({ playlistId, songs, onClose, onSave, initialData
                             .single();
 
                         if (ownerProfile) {
-                            allMembers.push({
+                            rawMembers.push({
                                 id: ownerProfile.id,
                                 name: ownerProfile.name || ownerProfile.email,
                                 email: ownerProfile.email,
@@ -87,9 +87,50 @@ export function SetlistManager({ playlistId, songs, onClose, onSave, initialData
                     }
                 }
 
-                // Remove duplicates just in case
-                const uniqueMembers = Array.from(new Map(allMembers.map(item => [item.id, item])).values());
-                setPlaylistMembers(uniqueMembers);
+                const uniqueMembers = Array.from(new Map(rawMembers.map(item => [item.id, item])).values());
+                const userIds = uniqueMembers.map(m => m.id);
+
+                // Fetch past scale roles for all playlist members to populate skills automatically
+                let userPastRolesMap = {};
+                if (userIds.length > 0) {
+                    try {
+                        const { data: pastScales } = await supabase
+                            .from('setlist_scales')
+                            .select('user_id, role')
+                            .in('user_id', userIds);
+
+                        if (pastScales) {
+                            pastScales.forEach(sc => {
+                                if (!sc.user_id || !sc.role) return;
+                                if (!userPastRolesMap[sc.user_id]) userPastRolesMap[sc.user_id] = new Set();
+                                sc.role.split(' + ').forEach(r => {
+                                    const trimmed = r.trim();
+                                    if (trimmed) userPastRolesMap[sc.user_id].add(trimmed);
+                                });
+                            });
+                        }
+                    } catch (e) {
+                        console.warn('Error fetching past scale roles for skills:', e);
+                    }
+                }
+
+                // Merge profile skills + past scale roles
+                const enrichedMembers = uniqueMembers.map(m => {
+                    const pastRoles = userPastRolesMap[m.id] ? Array.from(userPastRolesMap[m.id]) : [];
+                    const combinedSkills = Array.from(new Set([
+                        ...(m.available_instruments || []),
+                        ...(m.instrument ? [m.instrument] : []),
+                        ...pastRoles
+                    ])).filter(Boolean);
+
+                    return {
+                        ...m,
+                        instrument: m.instrument || combinedSkills[0] || '',
+                        available_instruments: combinedSkills
+                    };
+                });
+
+                setPlaylistMembers(enrichedMembers);
             });
         }
     }, [initialData?.id, playlistId]);
@@ -289,7 +330,8 @@ export function SetlistManager({ playlistId, songs, onClose, onSave, initialData
     const addSongManual = (song) => {
         // Use first function as default usage if available
         const defaultUsage = (Array.isArray(song.functions) && song.functions.length > 0) ? song.functions[0] : '';
-        setSelectedSongs([...selectedSongs, { ...song, uniqueId: Math.random().toString(36), usage: defaultUsage }]);
+        const uniqueId = `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+        setSelectedSongs([...selectedSongs, { ...song, uniqueId, usage: defaultUsage }]);
     };
 
     const removeSong = (index) => {
@@ -317,14 +359,6 @@ export function SetlistManager({ playlistId, songs, onClose, onSave, initialData
                 // 1. Try to find candidates matching the requested 'type' (Style)
                 const typeNorm = normalize(type);
 
-                // DEBUG: Check what we are filtering against
-
-
-                // DEBUG: Inspect first song in pool to verify structure
-                if (pool.length > 0) {
-
-                }
-
                 const candidates = pool.map((s, idx) => ({ s, idx })).filter(({ s }) => {
                     // Check Style
                     const styleMatch = normalize(s.style) === typeNorm;
@@ -333,9 +367,6 @@ export function SetlistManager({ playlistId, songs, onClose, onSave, initialData
                     // Check Functions (if array)
                     const funcMatch = Array.isArray(s.functions) && s.functions.some(f => normalize(f) === typeNorm);
 
-                    if (styleMatch || tagMatch || funcMatch) {
-
-                    }
                     return styleMatch || tagMatch || funcMatch;
                 });
 

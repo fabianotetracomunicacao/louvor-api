@@ -11,11 +11,6 @@ export function AdminDiagnosticsPage() {
   const [history, setHistory] = useState([]);
   const [latestE2EReport, setLatestE2EReport] = useState(null);
 
-  // Restringe acesso a administradores
-  if (!isSuperAdmin && !isChurchAdmin) {
-    return <Navigate to="/dashboard" replace />;
-  }
-
   useEffect(() => {
     const savedHistory = DiagnosticsService.getHistory();
     setHistory(savedHistory);
@@ -24,6 +19,11 @@ export function AdminDiagnosticsPage() {
     }
     DiagnosticsService.fetchLatestE2EReport().then(setLatestE2EReport);
   }, []);
+
+  // Restringe acesso a administradores
+  if (!isSuperAdmin && !isChurchAdmin) {
+    return <Navigate to="/dashboard" replace />;
+  }
 
   const handleRunCheckup = async () => {
     setIsRunning(true);

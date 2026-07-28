@@ -123,7 +123,7 @@ export function extractSlides(songOrContent) {
         // A chord token starts with A-G, optionally followed by # or b,
         // then any combination of letters, numbers, /, (, ), + or - characters
         // that are typical in chord notations (Dm7, F7M, G/E, A7/4, Bbmaj7, etc.)
-        const chordTokenRegex = /^[A-G][#b]?[a-zA-Z0-9\/\(\)\+\-]*$/;
+        const chordTokenRegex = /^[A-G][#b]?[a-zA-Z0-9/()+-]*$/;
         
         const tokens = trimmed.split(/\s+/).filter(t => t.length > 0);
         if (tokens.length === 0) return false;

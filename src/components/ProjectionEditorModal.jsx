@@ -35,20 +35,20 @@ export default function ProjectionEditorModal({ song, onClose, onSave, playlistI
         // 1. Remove lines that are just structural tags (e.g. [Verse 1]) including the newline.
         // We keep tags if they are longer or look like sections, but here we want pure lyrics as starting point.
         // Fix: Use [^\[\]]+ instead of .*? to prevent matching entire lines with inline chords like [F7M]...[G/E]
-        clean = clean.replace(/^\[[^\[\]]+\]\s*$\n?/gm, '');
+        clean = clean.replace(/^\[[^[\]]+\]\s*$\n?/gm, '');
         
         // 2. Remove remaining inline chords [G]
         clean = clean.replace(/\[.*?\]/g, '');
         
         // 3. Remove ChordPro specific tags like {tag: Name} or {endtag} or just {Verse}
-        clean = clean.replace(/^\{[^\{\}]+\}\s*$\n?/gm, '');
+        clean = clean.replace(/^\{[^{}]+\}\s*$\n?/gm, '');
 
         // Helper to detect plain-text chord lines
         const isChordLine = (line) => {
             const trimmed = line.trim();
             if (!trimmed) return false;
             // A chord token starts with A-G, optionally #/b, then any chord modifiers
-            const chordTokenRegex = /^[A-G][#b]?[a-zA-Z0-9\/\(\)\+\-]*$/;
+            const chordTokenRegex = /^[A-G][#b]?[a-zA-Z0-9/()+-]*$/;
             const tokens = trimmed.split(/\s+/).filter(t => t.length > 0);
             if (tokens.length === 0) return false;
             let chordCount = 0;

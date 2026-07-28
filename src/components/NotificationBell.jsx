@@ -57,6 +57,8 @@ export function NotificationBell() {
 
         if (link) {
             navigate(link);
+        } else if (type === 'new_setlist' && data?.playlistId) {
+            navigate(`/playlist/${data.playlistId}`, { state: { view: 'setlists' } });
         } else if (data?.playlistId) {
             // Navigate to playlist for invites, comments, new songs
             // Pass 'openChat' state if it's a message
@@ -65,8 +67,6 @@ export function NotificationBell() {
         } else if (data?.songId && (type === 'share_song' || type === 'song_share')) {
             // Share song
             navigate(`/player/${data.songId}`);
-        } else if (type === 'new_setlist' && data?.playlistId) {
-            navigate(`/playlist/${data.playlistId}`, { state: { view: 'setlists' } });
         }
 
     };

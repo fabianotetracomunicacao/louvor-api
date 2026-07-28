@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Trash2, Plus, ArrowLeft, Music } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useNotification } from '../contexts/NotificationContext';
@@ -19,22 +19,25 @@ export function AdminMetadataPage() {
     const [newInstrument, setNewInstrument] = useState('');
     const [loading, setLoading] = useState(true);
 
-    useEffect(() => {
-        loadData();
+    const loadData = useCallback(async () => {
+        setLoading(true);
+        try {
+            const [s, f, i] = await Promise.all([
+                getMusicalStyles(), 
+                getSongFunctions(),
+                getInstruments()
+            ]);
+            setStyles(s || []);
+            setFunctions(f || []);
+            setInstruments(i || []);
+        } finally {
+            setLoading(false);
+        }
     }, []);
 
-    const loadData = async () => {
-        setLoading(true);
-        const [s, f, i] = await Promise.all([
-            getMusicalStyles(), 
-            getSongFunctions(),
-            getInstruments()
-        ]);
-        setStyles(s);
-        setFunctions(f);
-        setInstruments(i);
-        setLoading(false);
-    };
+    useEffect(() => {
+        loadData();
+    }, [loadData]);
 
     const handleAddStyle = async (e) => {
         e.preventDefault();

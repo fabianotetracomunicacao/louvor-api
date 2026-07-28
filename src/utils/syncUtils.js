@@ -8,7 +8,7 @@ export const normalizeText = (text) => {
         .replace(/[\u0300-\u036f]/g, "") // remove accents
         .replace(/\[.*?\]/g, "") // remove [music], [sound] etc
         .replace(/\(.*?\)/g, "") // remove (vocals) etc
-        .replace(/[.,\/#!$%\^&\*;:{}=\-_`~]/g, "")
+        .replace(/[.,/#!$%^&*;:{}=\-_`~]/g, "")
         .replace(/\s{2,}/g, " ")
         .trim();
 };

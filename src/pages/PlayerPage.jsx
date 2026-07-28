@@ -102,6 +102,7 @@ export function PlayerPage() {
     const [savedTransposition, setSavedTransposition] = useState(initialTransposition); // "Meu Tom"
     const [churchTransposition, setChurchTransposition] = useState(0); // "Igreja"
     const [activeTab, setActiveTab] = useState('original'); // 'original', 'church', 'personal'
+    const [startKeyMode, setStartKeyMode] = useState(() => localStorage.getItem('tetracom_start_key') || 'original');
 
     // User Defaults
     const [fontSize, setFontSize] = useState(16);

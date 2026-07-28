@@ -91,7 +91,7 @@ export function getKeyboardChord(chordName) {
     // 5. Build Extensions (7ths, 9ths, 11ths, 13ths)
 
     // 7ths
-    if (modifier.includes('maj7') || modifier.includes('7M') || modifier === 'M7' || modifier.includes('m(maj7)' || slashExtensions.includes('maj7'))) {
+    if (modifier.includes('maj7') || modifier.includes('7M') || modifier === 'M7' || modifier.includes('m(maj7)') || slashExtensions.includes('maj7')) {
         intervals.push(INTERVALS.M7);
     } else if (modifier.includes('7') || slashExtensions.includes('7') || modifier.includes('11') || modifier.includes('13')) {
         // Standard 7, 11, 13 imply a minor 7th (Dominant) unless maj is specified

@@ -20,6 +20,7 @@ import {
     getPlaylistWithItems,
     addSongToPlaylist,
     removeSongFromPlaylist,
+    updatePlaylistItem,
     updatePlaylistOrder,
     getPlaylistMembers,
     getPlaylistComments,

@@ -1,7 +1,10 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import { fileURLToPath } from 'url'
 
 import { VitePWA } from 'vite-plugin-pwa'
+
+const mockSupabasePath = fileURLToPath(new URL('./src/__mocks__/supabaseClient.js', import.meta.url))
 
 // https://vite.dev/config/
 export default defineConfig({
@@ -84,10 +87,10 @@ export default defineConfig({
     globals: true,
     environment: 'jsdom',
     setupFiles: './vitest.setup.js',
-    alias: {
-      '../supabaseClient': '/Users/fabianofischer/Desktop/Aplicativos TetraCom 2026/Aplicativo cifras Tetracom/src/__mocks__/supabaseClient.js',
-      './supabaseClient': '/Users/fabianofischer/Desktop/Aplicativos TetraCom 2026/Aplicativo cifras Tetracom/src/__mocks__/supabaseClient.js'
-    },
+    alias: [
+      { find: /^(\.\.\/)+supabaseClient$/, replacement: mockSupabasePath },
+      { find: /^(\.\/)+supabaseClient$/, replacement: mockSupabasePath }
+    ],
     include: ['src/**/*.{test,spec}.{js,jsx}'],
   }
 })
