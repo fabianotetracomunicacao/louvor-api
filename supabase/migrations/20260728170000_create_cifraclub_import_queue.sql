@@ -28,8 +28,13 @@ create table public.cifraclub_import_items (
   song_id uuid references public.songs(id) on delete set null,
   last_error text,
   lease_until timestamptz,
+  claim_token uuid,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
+  check (
+    (status = 'imported' and song_id is not null)
+    or (status <> 'imported' and song_id is null)
+  ),
   unique (job_id, song_slug)
 );
 
@@ -44,6 +49,10 @@ create index cifraclub_import_jobs_claimable
 create index cifraclub_import_items_claimable
   on public.cifraclub_import_items (job_id, created_at)
   where status in ('pending', 'processing');
+
+create unique index cifraclub_import_only_one_processing_item
+  on public.cifraclub_import_items ((true))
+  where status = 'processing';
 
 alter table public.cifraclub_import_jobs enable row level security;
 alter table public.cifraclub_import_items enable row level security;
@@ -207,6 +216,7 @@ returns table (
   song_name text,
   song_slug text,
   attempts integer,
+  claim_token uuid,
   needs_discovery boolean
 )
 language plpgsql
@@ -218,12 +228,26 @@ declare
   selected_item public.cifraclub_import_items;
   lease_expires_at timestamptz;
   has_items boolean;
+  has_active_item boolean;
 begin
   if p_lease_seconds is null or p_lease_seconds < 1 then
     raise exception 'lease duration must be positive';
   end if;
 
   lease_expires_at := now() + make_interval(secs => p_lease_seconds);
+
+  perform pg_advisory_xact_lock(hashtext('cifraclub_import_work_claim'));
+
+  select exists (
+    select 1
+    from public.cifraclub_import_items
+    where status = 'processing'
+      and lease_until >= now()
+  ) into has_active_item;
+
+  if has_active_item then
+    return;
+  end if;
 
   select * into selected_job
   from public.cifraclub_import_jobs
@@ -261,6 +285,7 @@ begin
       null::text,
       null::text,
       null::integer,
+      null::uuid,
       true;
     return;
   end if;
@@ -295,6 +320,7 @@ begin
   set status = 'processing',
       attempts = attempts + 1,
       lease_until = lease_expires_at,
+      claim_token = gen_random_uuid(),
       updated_at = now()
   where id = selected_item.id
   returning * into selected_item;
@@ -309,12 +335,14 @@ begin
     selected_item.song_name,
     selected_item.song_slug,
     selected_item.attempts,
+    selected_item.claim_token,
     false;
 end;
 $$;
 
 create or replace function public.finish_cifraclub_import_item(
   p_item_id uuid,
+  p_claim_token uuid,
   p_status text,
   p_song_id uuid,
   p_error text,
@@ -333,18 +361,25 @@ begin
     raise exception 'invalid item status';
   end if;
 
+  if (p_status = 'imported' and p_song_id is null)
+    or (p_status <> 'imported' and p_song_id is not null) then
+    raise exception 'invalid song reference for item status';
+  end if;
+
   update public.cifraclub_import_items
   set status = p_status,
       song_id = p_song_id,
       last_error = p_error,
       lease_until = null,
+      claim_token = null,
       updated_at = now()
   where id = p_item_id
     and status = 'processing'
+    and claim_token = p_claim_token
   returning job_id into selected_job_id;
 
   if selected_job_id is null then
-    raise exception 'item is not being processed';
+    raise exception 'item is not the current claim';
   end if;
 
   update public.cifraclub_import_jobs as job
@@ -381,11 +416,11 @@ revoke all on function public.enqueue_cifraclub_import(text, text, integer) from
 revoke all on function public.cancel_cifraclub_import(uuid) from public;
 revoke all on function public.retry_cifraclub_import_failures(uuid) from public;
 revoke all on function public.claim_cifraclub_import_work(integer) from public;
-revoke all on function public.finish_cifraclub_import_item(uuid, text, uuid, text, timestamptz) from public;
+revoke all on function public.finish_cifraclub_import_item(uuid, uuid, text, uuid, text, timestamptz) from public;
 
 grant execute on function public.is_super_admin() to authenticated;
 grant execute on function public.enqueue_cifraclub_import(text, text, integer) to authenticated;
 grant execute on function public.cancel_cifraclub_import(uuid) to authenticated;
 grant execute on function public.retry_cifraclub_import_failures(uuid) to authenticated;
 grant execute on function public.claim_cifraclub_import_work(integer) to service_role;
-grant execute on function public.finish_cifraclub_import_item(uuid, text, uuid, text, timestamptz) to service_role;
+grant execute on function public.finish_cifraclub_import_item(uuid, uuid, text, uuid, text, timestamptz) to service_role;
