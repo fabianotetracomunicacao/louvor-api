@@ -292,6 +292,122 @@ def _search_from_artist_catalog(query: str, limit: int | None = None):
 
     return results
 
+def _sanitize_artist_candidates(artists: list) -> list[dict]:
+    """Return usable, unique artist candidates from the suggest response."""
+    candidates = []
+    seen_slugs = set()
+
+    for artist in artists:
+        if not isinstance(artist, dict):
+            continue
+
+        artist_id = artist.get("id")
+        name = artist.get("name")
+        slug = artist.get("slug")
+        if (
+            isinstance(artist_id, bool)
+            or not isinstance(artist_id, (int, str))
+            or not str(artist_id).strip()
+            or not isinstance(name, str)
+            or not name.strip()
+            or not isinstance(slug, str)
+            or not re.fullmatch(r"[a-z0-9-]+", slug)
+            or slug in seen_slugs
+        ):
+            continue
+
+        seen_slugs.add(slug)
+        candidates.append({"id": artist_id, "name": name, "slug": slug})
+
+    return candidates
+
+def _suggest_artists(query: str) -> list[dict]:
+    response = requests.get(
+        CIFRACLUB_ARTISTS_SUGGEST_URL,
+        params={"q": query},
+        headers=DEFAULT_HEADERS,
+        impersonate="chrome110",
+        timeout=10,
+    )
+    response.raise_for_status()
+    return _sanitize_artist_candidates(response.json().get("artists", []))
+
+def _catalog_for_selected_artist(artist_slug: str) -> dict | None:
+    artists = _suggest_artists(artist_slug)
+    selected_artist = next(
+        (artist for artist in artists if artist["slug"] == artist_slug),
+        None,
+    )
+    if selected_artist is None:
+        return None
+
+    songs_response = requests.get(
+        CIFRACLUB_ARTIST_SONGS_URL,
+        params={"artist_ids": str(selected_artist["id"]), "_sort": "pt_alphabetical"},
+        headers=DEFAULT_HEADERS,
+        impersonate="chrome110",
+        timeout=10,
+    )
+    songs_response.raise_for_status()
+
+    songs = []
+    seen = set()
+    for song in songs_response.json().get("songs", []):
+        if not isinstance(song, dict):
+            continue
+
+        song_artist_slug = song.get("artist_slug")
+        song_slug = song.get("slug")
+        if (
+            song_artist_slug != artist_slug
+            or not isinstance(song_slug, str)
+            or not re.fullmatch(r"[a-z0-9-]+", song_slug)
+        ):
+            continue
+
+        key = (song_artist_slug, song_slug)
+        if key in seen:
+            continue
+        seen.add(key)
+
+        songs.append({
+            "artist": song.get("artist_name") or _slug_to_name(song_artist_slug),
+            "name": song.get("name") or _slug_to_name(song_slug),
+            "artist_slug": song_artist_slug,
+            "song_slug": song_slug,
+            "url": f"{CIFRACLUB_BASE_URL}/{song_artist_slug}/{song_slug}",
+        })
+
+    return {"artist": selected_artist, "songs": songs, "total": len(songs)}
+
+@app.get("/api/artists/suggest")
+def artist_suggest():
+    query = request.args.get("q", "").strip()
+    if not query:
+        return jsonify({"error": 'Query parameter "q" is required'}), 400
+
+    try:
+        return jsonify({"artists": _suggest_artists(query)})
+    except requests.RequestException as error:
+        logger.error(f"Artist suggestion request failed: {error}")
+        return jsonify({"error": "Artist suggestion upstream request failed"}), 502
+
+@app.get("/api/artists/<artist_slug>/catalog")
+def artist_catalog(artist_slug):
+    if not re.fullmatch(r"[a-z0-9-]+", artist_slug):
+        return jsonify({"error": "Invalid artist slug"}), 400
+
+    try:
+        catalog = _catalog_for_selected_artist(artist_slug)
+    except requests.RequestException as error:
+        logger.error(f"Artist catalog request failed for {artist_slug}: {error}")
+        return jsonify({"error": "Artist catalog upstream request failed"}), 502
+
+    if catalog is None:
+        return jsonify({"error": "Artist not found"}), 404
+
+    return jsonify(catalog)
+
 def _search_from_html(query: str, limit: int = 20):
     """Fallback usando parsing de HTML para quando o endpoint de sugest\u00f5es falhar."""
     response = requests.get(
