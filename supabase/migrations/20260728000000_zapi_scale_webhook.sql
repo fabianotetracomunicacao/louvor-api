@@ -1,0 +1,157 @@
+-- Handles WhatsApp scale confirmation replies received through Z-API.
+-- Before using it, replace the placeholder secret below and configure the
+-- Z-API "On receive" webhook with:
+-- https://www.louvorplay.com.br/api/zapi-webhook?secret=YOUR_SECRET
+
+insert into public.app_settings (key, value, description)
+values (
+  'zapi_webhook_secret',
+  to_jsonb('CHANGE_ME_TO_A_LONG_RANDOM_SECRET'::text),
+  'Segredo usado para validar o webhook de recebimento da Z-API.'
+)
+on conflict (key) do nothing;
+
+create or replace function public.normalize_br_phone(input_phone text)
+returns text
+language plpgsql
+immutable
+as $$
+declare
+  digits text;
+  ddd text;
+  rest text;
+begin
+  digits := regexp_replace(coalesce(input_phone, ''), '\D', '', 'g');
+
+  if digits = '' then
+    return '';
+  end if;
+
+  if left(digits, 2) <> '55' then
+    digits := '55' || digits;
+  end if;
+
+  if length(digits) = 12 then
+    ddd := substring(digits from 3 for 2);
+    rest := substring(digits from 5);
+    digits := '55' || ddd || '9' || rest;
+  end if;
+
+  return digits;
+end;
+$$;
+
+create or replace function public.process_zapi_scale_response(
+  p_phone text,
+  p_message text,
+  p_secret text default ''
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  configured_secret text;
+  cleaned_message text;
+  response_status text;
+  normalized_phone text;
+  without_country text;
+  without_ninth text;
+  without_country_and_ninth text;
+  candidates text[];
+  target_scale record;
+  now_value timestamptz := now();
+begin
+  select value #>> '{}'
+    into configured_secret
+  from public.app_settings
+  where key = 'zapi_webhook_secret';
+
+  if coalesce(configured_secret, '') = ''
+     or configured_secret = 'CHANGE_ME_TO_A_LONG_RANDOM_SECRET'
+     or coalesce(p_secret, '') <> configured_secret then
+    return jsonb_build_object('success', false, 'error', 'unauthorized');
+  end if;
+
+  cleaned_message := lower(trim(coalesce(p_message, '')));
+  cleaned_message := translate(
+    cleaned_message,
+    'áàâãäéèêëíìîïóòôõöúùûüçñ',
+    'aaaaaeeeeiiiiooooouuuucn'
+  );
+
+  if cleaned_message ~ '^(1|sim|s|confirmo|confirmar|confirmado|presente|vou)(\s|$)' then
+    response_status := 'CONFIRMED';
+  elsif cleaned_message ~ '^(2|nao|n|recuso|recusar|declino|declinar)(\s|$)'
+     or cleaned_message like '%nao poderei%' then
+    response_status := 'DECLINED';
+  else
+    return jsonb_build_object('ignored', true, 'reason', 'unrecognized_response');
+  end if;
+
+  normalized_phone := public.normalize_br_phone(p_phone);
+
+  if normalized_phone = '' then
+    return jsonb_build_object('ignored', true, 'reason', 'missing_phone');
+  end if;
+
+  without_country := case
+    when left(normalized_phone, 2) = '55' then substring(normalized_phone from 3)
+    else normalized_phone
+  end;
+
+  without_ninth := case
+    when length(normalized_phone) = 13 then substring(normalized_phone from 1 for 4) || substring(normalized_phone from 6)
+    else normalized_phone
+  end;
+
+  without_country_and_ninth := case
+    when left(without_ninth, 2) = '55' then substring(without_ninth from 3)
+    else without_ninth
+  end;
+
+  candidates := array_remove(array[
+    normalized_phone,
+    regexp_replace(coalesce(p_phone, ''), '\D', '', 'g'),
+    without_country,
+    without_ninth,
+    without_country_and_ninth
+  ], '');
+
+  select ss.id, ss.user_id, ss.setlist_id
+    into target_scale
+  from public.setlist_scales ss
+  join public.profiles p on p.id = ss.user_id
+  where ss.status = 'PENDING'
+    and (
+      regexp_replace(coalesce(p.phone, ''), '\D', '', 'g') = any(candidates)
+      or regexp_replace(coalesce(p.whatsapp, ''), '\D', '', 'g') = any(candidates)
+      or public.normalize_br_phone(p.phone) = any(candidates)
+      or public.normalize_br_phone(p.whatsapp) = any(candidates)
+    )
+  order by coalesce(ss.whatsapp_sent_at, ss.created_at) desc, ss.created_at desc
+  limit 1;
+
+  if target_scale.id is null then
+    return jsonb_build_object('ignored', true, 'reason', 'pending_scale_not_found');
+  end if;
+
+  update public.setlist_scales
+  set status = response_status,
+      whatsapp_status = response_status,
+      confirmed_at = case when response_status = 'CONFIRMED' then now_value else confirmed_at end,
+      declined_at = case when response_status = 'DECLINED' then now_value else declined_at end,
+      decline_reason = case when response_status = 'DECLINED' then 'Resposta recebida via WhatsApp' else decline_reason end
+  where id = target_scale.id;
+
+  return jsonb_build_object(
+    'success', true,
+    'scaleId', target_scale.id,
+    'status', response_status
+  );
+end;
+$$;
+
+grant execute on function public.process_zapi_scale_response(text, text, text) to anon;
+grant execute on function public.process_zapi_scale_response(text, text, text) to authenticated;
