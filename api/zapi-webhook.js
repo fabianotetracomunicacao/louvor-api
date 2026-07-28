@@ -23,6 +23,74 @@ function getButtonId(payload) {
   ).trim();
 }
 
+function normalizePhone(phone) {
+  if (!phone) return '';
+  let digits = String(phone).replace(/\D/g, '');
+  if (!digits) return '';
+  if (!digits.startsWith('55')) digits = `55${digits}`;
+  if (digits.length === 12) {
+    const ddd = digits.slice(2, 4);
+    const rest = digits.slice(4);
+    digits = `55${ddd}9${rest}`;
+  }
+  return digits;
+}
+
+async function getZApiConfig(supabase) {
+  const { data, error } = await supabase
+    .from('app_settings')
+    .select('key, value')
+    .in('key', ['zapi_instance_id', 'zapi_instance_token', 'zapi_client_token']);
+
+  if (error) throw error;
+
+  const config = {};
+  for (const row of data || []) {
+    config[row.key] = row.value || '';
+  }
+
+  return {
+    instanceId: config.zapi_instance_id || '',
+    instanceToken: config.zapi_instance_token || '',
+    clientToken: config.zapi_client_token || '',
+  };
+}
+
+async function sendLeaderSummary(supabase, leaderPhone, message) {
+  const config = await getZApiConfig(supabase);
+  const phone = normalizePhone(leaderPhone);
+
+  if (!config.instanceId || !config.instanceToken || !phone || !message) {
+    return { skipped: true };
+  }
+
+  const headers = { 'Content-Type': 'application/json' };
+  if (config.clientToken) {
+    headers['Client-Token'] = config.clientToken;
+  }
+
+  const response = await fetch(
+    `https://api.z-api.io/instances/${config.instanceId}/token/${config.instanceToken}/send-text`,
+    {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        phone,
+        message,
+        delayMessage: 1,
+        delayTyping: 1,
+      }),
+    },
+  );
+
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    return { success: false, status: response.status, error: body };
+  }
+
+  return { success: true };
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'POST');
@@ -56,6 +124,19 @@ export default async function handler(req, res) {
   if (error) {
     console.error('[zapi-webhook] RPC error:', error);
     return res.status(500).json({ error: 'webhook_processing_failed' });
+  }
+
+  if (data?.success && data?.leaderPhone && data?.leaderMessage) {
+    try {
+      const leaderNotification = await sendLeaderSummary(supabase, data.leaderPhone, data.leaderMessage);
+      return res.status(200).json({ ...data, leaderNotification });
+    } catch (notificationError) {
+      console.error('[zapi-webhook] Leader notification error:', notificationError);
+      return res.status(200).json({
+        ...data,
+        leaderNotification: { success: false, error: 'leader_notification_failed' },
+      });
+    }
   }
 
   return res.status(200).json(data);

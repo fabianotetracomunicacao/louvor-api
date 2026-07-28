@@ -64,6 +64,10 @@ declare
   without_country_and_ninth text;
   candidates text[];
   target_scale record;
+  setlist_info record;
+  leader_phone text;
+  summary_lines text;
+  summary_totals record;
   now_value timestamptz := now();
 begin
   select value #>> '{}'
@@ -171,10 +175,69 @@ begin
       decline_reason = case when response_status = 'DECLINED' then 'Resposta recebida via WhatsApp' else decline_reason end
   where id = target_scale.id;
 
+  select s.id,
+         coalesce(s.title, s.name, 'Culto') as title,
+         s.date,
+         s.created_by,
+         coalesce(leader.whatsapp, leader.phone) as leader_phone
+    into setlist_info
+  from public.setlists s
+  left join public.profiles leader on leader.id = s.created_by
+  where s.id = target_scale.setlist_id;
+
+  leader_phone := setlist_info.leader_phone;
+
+  select string_agg(
+           case coalesce(ss.status, 'PENDING')
+             when 'CONFIRMED' then '✅ '
+             when 'DECLINED' then '❌ '
+             else '⏳ '
+           end ||
+           coalesce(p.name, p.full_name, p.email, 'Músico') ||
+           case when coalesce(ss.role, '') <> '' then ' — ' || ss.role else '' end,
+           E'\n'
+           order by
+             case coalesce(ss.status, 'PENDING')
+               when 'DECLINED' then 1
+               when 'PENDING' then 2
+               when 'CONFIRMED' then 3
+               else 4
+             end,
+             coalesce(p.name, p.full_name, p.email, '')
+         ) as lines,
+         count(*) filter (where ss.status = 'CONFIRMED') as confirmed_count,
+         count(*) filter (where ss.status = 'DECLINED') as declined_count,
+         count(*) filter (where coalesce(ss.status, 'PENDING') = 'PENDING') as pending_count
+    into summary_totals
+  from public.setlist_scales ss
+  join public.profiles p on p.id = ss.user_id
+  where ss.setlist_id = target_scale.setlist_id;
+
+  summary_lines := coalesce(summary_totals.lines, 'Nenhum músico escalado.');
+
   return jsonb_build_object(
     'success', true,
     'scaleId', target_scale.id,
-    'status', response_status
+    'status', response_status,
+    'leaderPhone', leader_phone,
+    'leaderMessage', concat(
+      case response_status
+        when 'CONFIRMED' then '✅ Confirmação recebida'
+        else '❌ Recusa recebida'
+      end,
+      E'\n\n',
+      '📌 ', coalesce(setlist_info.title, 'Culto'),
+      case
+        when setlist_info.date is not null then E'\n📅 ' || to_char(setlist_info.date at time zone 'America/Sao_Paulo', 'DD/MM/YYYY HH24:MI')
+        else ''
+      end,
+      E'\n\n',
+      summary_lines,
+      E'\n\n',
+      'Resumo: ✅ ', coalesce(summary_totals.confirmed_count, 0)::text,
+      ' | ❌ ', coalesce(summary_totals.declined_count, 0)::text,
+      ' | ⏳ ', coalesce(summary_totals.pending_count, 0)::text
+    )
   );
 end;
 $$;
