@@ -1,3 +1,10 @@
+create extension if not exists supabase_vault with schema vault;
+create extension if not exists pg_net with schema extensions;
+create extension if not exists pg_cron with schema pg_catalog;
+
+alter table public.songs
+  add column if not exists cifraclub_url text;
+
 create table public.cifraclub_import_jobs (
   id uuid primary key default gen_random_uuid(),
   artist_name text not null,
@@ -421,3 +428,312 @@ grant execute on function public.cancel_cifraclub_import(uuid) to authenticated;
 grant execute on function public.retry_cifraclub_import_failures(uuid) to authenticated;
 grant execute on function public.claim_cifraclub_import_work(integer) to service_role;
 grant execute on function public.finish_cifraclub_import_item(uuid, uuid, text, uuid, text, timestamptz) to service_role;
+
+create or replace function public.normalize_cifraclub_identity(p_value text)
+returns text
+language sql
+immutable
+parallel safe
+as $$
+  select btrim(
+    regexp_replace(
+      translate(
+        lower(coalesce(p_value, '')),
+        'áàâãäåéèêëíìîïóòôõöúùûüçñýÿ',
+        'aaaaaaeeeeiiiiooooouuuucnyy'
+      ),
+      '[^a-z0-9]+',
+      ' ',
+      'g'
+    )
+  )
+$$;
+
+create or replace function public.find_cifraclub_song_duplicate(
+  p_slug text,
+  p_title text,
+  p_artist text
+)
+returns table (id uuid)
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select song.id
+  from public.songs as song
+  where (
+      nullif(btrim(p_slug), '') is not null
+      and song.cifraclub_slug = btrim(p_slug)
+    )
+    or (
+      nullif(btrim(p_slug), '') is null
+      and song.deleted_at is null
+      and public.normalize_cifraclub_identity(song.title)
+        = public.normalize_cifraclub_identity(p_title)
+      and public.normalize_cifraclub_identity(song.artist)
+        = public.normalize_cifraclub_identity(p_artist)
+    )
+  order by
+    case when song.cifraclub_slug = btrim(p_slug) then 0 else 1 end,
+    song.created_at
+  limit 1
+$$;
+
+create or replace function public.complete_cifraclub_import_discovery(
+  p_job_id uuid,
+  p_artist_name text,
+  p_songs jsonb,
+  p_next_run_at timestamptz
+)
+returns public.cifraclub_import_jobs
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  normalized_artist_name text := btrim(coalesce(p_artist_name, ''));
+  selected_job public.cifraclub_import_jobs;
+  discovered_count integer;
+begin
+  if normalized_artist_name = '' or p_next_run_at is null then
+    raise exception 'invalid discovery result';
+  end if;
+
+  select * into selected_job
+  from public.cifraclub_import_jobs
+  where id = p_job_id
+    and status = 'discovering'
+    and lease_until >= now()
+  for update;
+
+  if selected_job.id is null then
+    raise exception 'discovery is not the current claim';
+  end if;
+
+  insert into public.cifraclub_import_items (
+    job_id,
+    song_name,
+    song_slug
+  )
+  select
+    p_job_id,
+    btrim(song.name),
+    lower(btrim(song.song_slug))
+  from jsonb_to_recordset(coalesce(p_songs, '[]'::jsonb))
+    as song(name text, song_slug text)
+  where btrim(coalesce(song.name, '')) <> ''
+    and lower(btrim(coalesce(song.song_slug, ''))) ~ '^[a-z0-9-]+$'
+  on conflict (job_id, song_slug)
+  do update set song_name = excluded.song_name;
+
+  select count(*)::integer into discovered_count
+  from public.cifraclub_import_items
+  where job_id = p_job_id;
+
+  update public.cifraclub_import_jobs
+  set artist_name = normalized_artist_name,
+      total_count = discovered_count,
+      status = case when discovered_count = 0 then 'completed' else 'processing' end,
+      next_run_at = p_next_run_at,
+      lease_until = null,
+      last_error = null,
+      updated_at = now()
+  where id = p_job_id
+  returning * into selected_job;
+
+  return selected_job;
+end;
+$$;
+
+create or replace function public.fail_cifraclub_import_discovery(
+  p_job_id uuid,
+  p_error text
+)
+returns public.cifraclub_import_jobs
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  failed_job public.cifraclub_import_jobs;
+begin
+  update public.cifraclub_import_jobs
+  set status = 'completed_with_errors',
+      lease_until = null,
+      last_error = nullif(btrim(coalesce(p_error, '')), ''),
+      updated_at = now()
+  where id = p_job_id
+    and status = 'discovering'
+    and lease_until >= now()
+  returning * into failed_job;
+
+  if failed_job.id is null then
+    raise exception 'discovery is not the current claim';
+  end if;
+
+  return failed_job;
+end;
+$$;
+
+create or replace function public.pause_cifraclub_import_job(
+  p_job_id uuid,
+  p_item_id uuid,
+  p_claim_token uuid,
+  p_error text
+)
+returns public.cifraclub_import_jobs
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  paused_job public.cifraclub_import_jobs;
+  released_item_id uuid;
+begin
+  if p_item_id is not null then
+    if p_claim_token is null then
+      raise exception 'claim token is required';
+    end if;
+
+    update public.cifraclub_import_items
+    set status = 'pending',
+        lease_until = null,
+        claim_token = null,
+        last_error = nullif(btrim(coalesce(p_error, '')), ''),
+        updated_at = now()
+    where id = p_item_id
+      and job_id = p_job_id
+      and status = 'processing'
+      and claim_token = p_claim_token
+    returning id into released_item_id;
+
+    if released_item_id is null then
+      raise exception 'item is not the current claim';
+    end if;
+  elsif p_claim_token is not null then
+    raise exception 'discovery pause cannot include a claim token';
+  end if;
+
+  update public.cifraclub_import_jobs
+  set status = 'paused',
+      lease_until = null,
+      last_error = nullif(btrim(coalesce(p_error, '')), ''),
+      updated_at = now()
+  where id = p_job_id
+    and (
+      released_item_id is not null
+      or (status = 'discovering' and lease_until >= now())
+    )
+  returning * into paused_job;
+
+  if paused_job.id is null then
+    raise exception 'job is not the current claim';
+  end if;
+
+  return paused_job;
+end;
+$$;
+
+do $$
+begin
+  if not exists (
+    select 1
+    from vault.secrets
+    where name = 'cifraclub_import_worker_secret'
+  ) then
+    perform vault.create_secret(
+      encode(gen_random_bytes(32), 'hex'),
+      'cifraclub_import_worker_secret',
+      'Authenticates the scheduled CifraClub import worker'
+    );
+  end if;
+end;
+$$;
+
+create or replace function public.validate_cifraclub_import_worker_secret(
+  p_secret text
+)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select coalesce(
+    nullif(p_secret, '') is not null
+    and exists (
+      select 1
+      from vault.decrypted_secrets
+      where name = 'cifraclub_import_worker_secret'
+        and decrypted_secret = p_secret
+    ),
+    false
+  )
+$$;
+
+create or replace function public.invoke_cifraclub_import_worker()
+returns bigint
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  worker_secret text;
+  worker_base_url text;
+  request_id bigint;
+begin
+  select decrypted_secret into worker_secret
+  from vault.decrypted_secrets
+  where name = 'cifraclub_import_worker_secret';
+
+  select coalesce(
+    (
+      select decrypted_secret
+      from vault.decrypted_secrets
+      where name = 'cifraclub_import_worker_url'
+    ),
+    nullif(current_setting('app.settings.api_external_url', true), ''),
+    nullif(current_setting('app.settings.supabase_url', true), '')
+  ) into worker_base_url;
+
+  if worker_secret is null then
+    raise exception 'CifraClub import worker secret is not configured';
+  end if;
+  if worker_base_url is null then
+    raise exception 'CifraClub import worker URL is not configured';
+  end if;
+
+  select net.http_post(
+    url := rtrim(worker_base_url, '/')
+      || '/functions/v1/cifraclub-import-worker',
+    headers := jsonb_build_object(
+      'content-type', 'application/json',
+      'x-worker-secret', worker_secret
+    ),
+    body := '{}'::jsonb
+  ) into request_id;
+
+  return request_id;
+end;
+$$;
+
+revoke all on function public.normalize_cifraclub_identity(text) from public;
+revoke all on function public.find_cifraclub_song_duplicate(text, text, text) from public;
+revoke all on function public.complete_cifraclub_import_discovery(uuid, text, jsonb, timestamptz) from public;
+revoke all on function public.fail_cifraclub_import_discovery(uuid, text) from public;
+revoke all on function public.pause_cifraclub_import_job(uuid, uuid, uuid, text) from public;
+revoke all on function public.validate_cifraclub_import_worker_secret(text) from public;
+revoke all on function public.invoke_cifraclub_import_worker() from public;
+
+grant execute on function public.find_cifraclub_song_duplicate(text, text, text) to service_role;
+grant execute on function public.complete_cifraclub_import_discovery(uuid, text, jsonb, timestamptz) to service_role;
+grant execute on function public.fail_cifraclub_import_discovery(uuid, text) to service_role;
+grant execute on function public.pause_cifraclub_import_job(uuid, uuid, uuid, text) to service_role;
+grant execute on function public.validate_cifraclub_import_worker_secret(text) to service_role;
+
+select cron.schedule(
+  'cifraclub-import-worker',
+  '* * * * *',
+  $cron$select public.invoke_cifraclub_import_worker();$cron$
+);
