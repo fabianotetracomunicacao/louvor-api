@@ -1,7 +1,8 @@
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import api
+import cifraclub
 
 
 class ArtistCatalogApiTestCase(unittest.TestCase):
@@ -103,6 +104,12 @@ class ArtistCatalogApiTestCase(unittest.TestCase):
             self.requests_get.call_args_list[1].kwargs["params"],
             {"artist_ids": "11", "_sort": "pt_alphabetical"},
         )
+        for call in self.requests_get.call_args_list:
+            self.assertNotIn("impersonate", call.kwargs)
+            self.assertEqual(
+                call.kwargs["headers"]["User-Agent"],
+                "LouvorPlay-CifraImporter/1.0",
+            )
 
     def test_catalog_rejects_when_upstream_has_no_exact_slug_match(self):
         self.requests_get.return_value.json.return_value = {
@@ -114,6 +121,44 @@ class ArtistCatalogApiTestCase(unittest.TestCase):
         self.assertEqual(response.status_code, 404)
         self.assertEqual(response.json, {"error": "Artist not found"})
         self.assertEqual(self.requests_get.call_count, 1)
+
+    @patch("api.CifraClub.cifra")
+    def test_detail_preserves_upstream_block_status(self, cifra):
+        cifra.return_value = {
+            "error": "Forbidden by upstream",
+            "upstream_status": 403,
+        }
+
+        response = self.client.get("/artists/artista/songs/cancao")
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.json["upstream_status"], 403)
+
+
+class CifraClubHttpIdentityTestCase(unittest.TestCase):
+    @patch("cifraclub.requests.get")
+    def test_detail_fetch_uses_transparent_stable_identity(self, requests_get):
+        response = MagicMock()
+        response.text = (
+            "<h1 class='t1'>Canção</h1>"
+            "<h2 class='t3'>Artista</h2>"
+            "<div class='cifra_cnt'><pre>G\\nLetra</pre></div>"
+        )
+        requests_get.return_value = response
+        result = {}
+
+        extracted = cifraclub.CifraClub()._extract_with_requests(
+            "https://www.cifraclub.com.br/artista/cancao",
+            result,
+        )
+
+        self.assertTrue(extracted)
+        kwargs = requests_get.call_args.kwargs
+        self.assertNotIn("impersonate", kwargs)
+        self.assertEqual(
+            kwargs["headers"]["User-Agent"],
+            "LouvorPlay-CifraImporter/1.0",
+        )
 
 
 if __name__ == "__main__":

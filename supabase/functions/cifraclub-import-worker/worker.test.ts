@@ -3,6 +3,7 @@ import {
   classifyUpstream,
   nextRunAt,
   normalizeIdentity,
+  retryRunAt,
 } from "../_shared/importQueue.ts";
 import {
   createHandler,
@@ -62,6 +63,7 @@ function workerDeps(
     }),
     saveDiscovery: async () => undefined,
     failDiscovery: async (_claim, reason) => ({ status: "failed", reason }),
+    retryDiscovery: async (_claim, reason) => ({ status: "retrying", reason }),
     findSlugDuplicate: async () => null,
     fetchCifra: async () => ({
       status: 200,
@@ -76,11 +78,12 @@ function workerDeps(
       },
     }),
     findCanonicalDuplicate: async () => null,
-    insertSong: async () => ({ id: "song-1" }),
+    importSong: async () => ({ status: "imported", songId: "song-1" }),
     finish: async (_claim, outcome) => ({
       status: outcome.status,
       songId: outcome.songId ?? undefined,
     }),
+    retryItem: async (_claim, reason) => ({ status: "retrying", reason }),
     pause: async (_claim, reason) => ({ status: "paused", reason }),
     now: () => new Date("2026-07-28T12:00:00.000Z"),
     random: () => 0,
@@ -120,6 +123,13 @@ Deno.test("identidade ignora acento, caixa e pontuacao", () => {
 Deno.test("403 e captcha pausam a fila", () => {
   assertEquals(classifyUpstream(403, ""), "blocked");
   assertEquals(classifyUpstream(200, "captcha challenge"), "blocked");
+  assertEquals(
+    classifyUpstream(
+      502,
+      '{"error":"Forbidden","upstream_status":403}',
+    ),
+    "blocked",
+  );
 });
 
 Deno.test("classifica falhas temporarias e permanentes", () => {
@@ -140,9 +150,25 @@ Deno.test("agenda a proxima execucao entre 30 e 60 segundos", () => {
   );
 });
 
+Deno.test("backoff temporario cresce com as tentativas", () => {
+  const now = new Date("2026-07-28T12:00:00.000Z");
+
+  assertEquals(
+    retryRunAt(now, 1, () => 0).toISOString(),
+    "2026-07-28T12:00:30.000Z",
+  );
+  assertEquals(
+    retryRunAt(now, 2, () => 0).toISOString(),
+    "2026-07-28T12:01:00.000Z",
+  );
+  assertEquals(
+    retryRunAt(now, 3, () => 0).toISOString(),
+    "2026-07-28T12:02:00.000Z",
+  );
+});
+
 Deno.test("titulo igual com artista diferente e importado com nomes canonicos", async () => {
   let inserted: unknown = null;
-  let finishedStatus = "";
   const result = await processClaim(
     fixtureClaim,
     workerDeps({
@@ -161,20 +187,15 @@ Deno.test("titulo igual com artista diferente e importado com nomes canonicos", 
           cifraclub_url: "https://www.cifraclub.com.br/artista/cancao",
         },
       }),
-      insertSong: async (payload) => {
-        inserted = payload;
-        return { id: "song-1" };
-      },
-      finish: async (claim, outcome) => {
+      importSong: async (claim, payload) => {
         assertEquals(claim.claimToken, "claim-1");
-        finishedStatus = outcome.status;
-        return { status: outcome.status, songId: outcome.songId ?? undefined };
+        inserted = payload;
+        return { status: "imported", songId: "song-1" };
       },
     }),
   );
 
   assertEquals(result.status, "imported");
-  assertEquals(finishedStatus, "imported");
   assertJsonEquals(inserted, {
     title: "Canção",
     artist: "Outro Artista",
@@ -182,7 +203,6 @@ Deno.test("titulo igual com artista diferente e importado com nomes canonicos", 
     original_key: "G",
     style: null,
     youtube_links: [],
-    type: "chords",
     cifraclub_slug: "artista/cancao",
     cifraclub_url: "https://www.cifraclub.com.br/artista/cancao",
     is_official: false,
@@ -219,9 +239,9 @@ Deno.test("duplicata pelos nomes canonicos e ignorada depois da coleta", async (
     fixtureClaim,
     workerDeps({
       findCanonicalDuplicate: async () => ({ id: "canonical-existing" }),
-      insertSong: async () => {
+      importSong: async () => {
         inserted = true;
-        return { id: "never" };
+        return { status: "imported", songId: "never" };
       },
     }),
   );
@@ -230,38 +250,39 @@ Deno.test("duplicata pelos nomes canonicos e ignorada depois da coleta", async (
   assertEquals(inserted, false);
 });
 
-Deno.test("conflito unico ao inserir vira skipped", async () => {
-  let slugChecks = 0;
+Deno.test("conflito unico resolvido pela RPC atomica vira skipped", async () => {
   const result = await processClaim(
     fixtureClaim,
     workerDeps({
-      findSlugDuplicate: async () => {
-        slugChecks += 1;
-        return slugChecks === 1 ? null : { id: "racing-import" };
-      },
-      insertSong: async () => {
-        throw { code: "23505", message: "duplicate key value" };
-      },
+      importSong: async () => ({
+        status: "skipped",
+        existingSongId: "racing-import",
+      }),
     }),
   );
 
   assertEquals(result.status, "skipped");
-  assertEquals(slugChecks, 2);
 });
 
-Deno.test("403 pausa o trabalho sem finalizar o item", async () => {
+Deno.test("bloqueio encapsulado em 502 pausa e agenda retomada", async () => {
   let finished = false;
   let pauseReason = "";
+  let pauseAt = "";
   const result = await processClaim(
-    fixtureClaim,
+    { ...fixtureClaim, attempts: 2 },
     workerDeps({
-      fetchCifra: async () => ({ status: 403, body: "forbidden", data: null }),
+      fetchCifra: async () => ({
+        status: 502,
+        body: '{"error":"Forbidden","upstream_status":403}',
+        data: null,
+      }),
       finish: async () => {
         finished = true;
         return { status: "failed" };
       },
-      pause: async (_claim, reason) => {
+      pause: async (_claim, reason, nextRunAt) => {
         pauseReason = reason;
+        pauseAt = nextRunAt;
         return { status: "paused", reason };
       },
     }),
@@ -269,7 +290,35 @@ Deno.test("403 pausa o trabalho sem finalizar o item", async () => {
 
   assertEquals(result.status, "paused");
   assertEquals(finished, false);
-  assertMatch(pauseReason, /403/);
+  assertMatch(pauseReason, /502/);
+  assertEquals(pauseAt, "2026-07-28T12:01:00.000Z");
+});
+
+Deno.test("503 reprograma o item sem contabilizar falha", async () => {
+  let retryAt = "";
+  let finished = false;
+  const result = await processClaim(
+    { ...fixtureClaim, attempts: 3 },
+    workerDeps({
+      fetchCifra: async () => ({
+        status: 503,
+        body: "upstream unavailable",
+        data: null,
+      }),
+      retryItem: async (_claim, _reason, nextRunAt) => {
+        retryAt = nextRunAt;
+        return { status: "retrying" };
+      },
+      finish: async () => {
+        finished = true;
+        return { status: "failed" };
+      },
+    }),
+  );
+
+  assertEquals(result.status, "retrying");
+  assertEquals(retryAt, "2026-07-28T12:02:00.000Z");
+  assertEquals(finished, false);
 });
 
 Deno.test("descoberta salva artista canonico e agenda intervalo antes do primeiro item", async () => {
@@ -278,8 +327,8 @@ Deno.test("descoberta salva artista canonico e agenda intervalo antes do primeir
     itemId: null,
     songName: null,
     songSlug: null,
-    attempts: null,
-    claimToken: null,
+    attempts: 1,
+    claimToken: "discovery-claim-1",
     needsDiscovery: true,
   };
   let saved: unknown = null;
@@ -303,7 +352,8 @@ Deno.test("descoberta salva artista canonico e agenda intervalo antes do primeir
           total: 1,
         },
       }),
-      saveDiscovery: async (_claim, discovery) => {
+      saveDiscovery: async (claim, discovery) => {
+        assertEquals(claim.claimToken, "discovery-claim-1");
         saved = discovery;
       },
     }),
@@ -323,8 +373,8 @@ Deno.test("falha permanente da descoberta libera o trabalho como failed", async 
     itemId: null,
     songName: null,
     songSlug: null,
-    attempts: null,
-    claimToken: null,
+    attempts: 1,
+    claimToken: "discovery-claim-1",
     needsDiscovery: true,
   };
   let failureReason = "";
@@ -392,7 +442,8 @@ Deno.test("adaptador de producao usa RPCs, fencing e API sem rede real", async (
   const config: ProductionConfig = {
     supabaseUrl: "https://project.supabase.co",
     serviceRoleKey: "service-role",
-    cifraApiUrl: "https://cifra.example/api",
+    cifraCatalogApiUrl: "https://cifra.example/api",
+    cifraDetailApiUrl: "https://cifra.example",
     leaseSeconds: 120,
     now: () => new Date("2026-07-28T12:00:00.000Z"),
     random: () => 0,
@@ -427,7 +478,13 @@ Deno.test("adaptador de producao usa RPCs, fencing e API sem rede real", async (
     if (url.endsWith("/rpc/find_cifraclub_song_duplicate")) {
       return Response.json([]);
     }
-    if (url === "https://cifra.example/api/artists/artista/songs/cancao") {
+    if (url === "https://cifra.example/api/artists/artista/catalog") {
+      return Response.json({
+        artist: { name: "Artista Canônico", slug: "artista" },
+        songs: [],
+      });
+    }
+    if (url === "https://cifra.example/artists/artista/songs/cancao") {
       return Response.json({
         name: "Canção",
         artist: "Artista Canônico",
@@ -435,36 +492,45 @@ Deno.test("adaptador de producao usa RPCs, fencing e API sem rede real", async (
         cifraclub_url: "https://www.cifraclub.com.br/artista/cancao",
       });
     }
-    if (url.endsWith("/songs?select=id")) {
-      return Response.json([{ id: "song-created" }], { status: 201 });
-    }
-    if (url.endsWith("/rpc/finish_cifraclub_import_item")) {
-      return Response.json({ id: "job-1" });
+    if (url.endsWith("/rpc/import_cifraclub_song")) {
+      return Response.json([{
+        status: "imported",
+        song_id: "song-created",
+        existing_song_id: null,
+      }]);
     }
     return Response.json({ error: "unexpected request" }, { status: 500 });
   };
   const runtime = createProductionRuntime(config, fakeFetch);
 
+  const catalog = await runtime.fetchCatalog(fixtureClaim);
+  assertEquals(catalog.status, 200);
   assertEquals(await runtime.validateSecret("vault-secret"), true);
   const result = await runOne(runtime);
 
   assertEquals(result.status, "imported");
   assertJsonEquals(calls.map((call) => call.url), [
+    "https://cifra.example/api/artists/artista/catalog",
     "https://project.supabase.co/rest/v1/rpc/validate_cifraclub_import_worker_secret",
     "https://project.supabase.co/rest/v1/rpc/claim_cifraclub_import_work",
     "https://project.supabase.co/rest/v1/rpc/find_cifraclub_song_duplicate",
-    "https://cifra.example/api/artists/artista/songs/cancao",
+    "https://cifra.example/artists/artista/songs/cancao",
     "https://project.supabase.co/rest/v1/rpc/find_cifraclub_song_duplicate",
-    "https://project.supabase.co/rest/v1/songs?select=id",
-    "https://project.supabase.co/rest/v1/rpc/finish_cifraclub_import_item",
+    "https://project.supabase.co/rest/v1/rpc/import_cifraclub_song",
   ]);
-  assertJsonEquals(calls[1].body, { p_lease_seconds: 120 });
+  assertJsonEquals(calls[2].body, { p_lease_seconds: 120 });
   assertJsonEquals(calls[6].body, {
     p_item_id: "item-1",
     p_claim_token: "claim-1",
-    p_status: "imported",
-    p_song_id: "song-created",
-    p_error: null,
+    p_title: "Canção",
+    p_artist: "Artista Canônico",
+    p_content: "[G]Deus de [D]promessas",
+    p_original_key: "G",
+    p_style: null,
+    p_youtube_links: [],
+    p_cifraclub_slug: "artista/cancao",
+    p_cifraclub_url: "https://www.cifraclub.com.br/artista/cancao",
+    p_created_by: "user-1",
     p_next_run_at: "2026-07-28T12:00:30.000Z",
   });
 });

@@ -36,6 +36,10 @@ DEFAULT_HEADERS = {
     "Origin": CIFRACLUB_BASE_URL,
     "Referer": f"{CIFRACLUB_BASE_URL}/",
 }
+IMPORTER_HEADERS = {
+    "User-Agent": "LouvorPlay-CifraImporter/1.0",
+    "Accept": "application/json",
+}
 
 # Gospel genre keywords for matching
 GOSPEL_KEYWORDS = {"gospel", "religioso", "gospel/religioso", "crist\u00e3", "cristao", "worship"}
@@ -325,8 +329,7 @@ def _suggest_artists(query: str) -> list[dict]:
     response = requests.get(
         CIFRACLUB_ARTISTS_SUGGEST_URL,
         params={"q": query},
-        headers=DEFAULT_HEADERS,
-        impersonate="chrome110",
+        headers=IMPORTER_HEADERS,
         timeout=10,
     )
     response.raise_for_status()
@@ -344,8 +347,7 @@ def _catalog_for_selected_artist(artist_slug: str) -> dict | None:
     songs_response = requests.get(
         CIFRACLUB_ARTIST_SONGS_URL,
         params={"artist_ids": str(selected_artist["id"]), "_sort": "pt_alphabetical"},
-        headers=DEFAULT_HEADERS,
-        impersonate="chrome110",
+        headers=IMPORTER_HEADERS,
         timeout=10,
     )
     songs_response.raise_for_status()
@@ -390,7 +392,12 @@ def artist_suggest():
         return jsonify({"artists": _suggest_artists(query)})
     except requests.RequestException as error:
         logger.error(f"Artist suggestion request failed: {error}")
-        return jsonify({"error": "Artist suggestion upstream request failed"}), 502
+        upstream_status = getattr(getattr(error, "response", None), "status_code", None)
+        status = upstream_status if upstream_status in {403, 429} else 502
+        return jsonify({
+            "error": "Artist suggestion upstream request failed",
+            "upstream_status": upstream_status,
+        }), status
 
 @app.get("/api/artists/<artist_slug>/catalog")
 def artist_catalog(artist_slug):
@@ -401,7 +408,15 @@ def artist_catalog(artist_slug):
         catalog = _catalog_for_selected_artist(artist_slug)
     except requests.RequestException as error:
         logger.error(f"Artist catalog request failed for {artist_slug}: {error}")
-        return jsonify({"error": "Artist catalog upstream request failed"}), 502
+        upstream_response = getattr(error, "response", None)
+        upstream_status = getattr(upstream_response, "status_code", None)
+        upstream_body = getattr(upstream_response, "text", "") or ""
+        status = upstream_status if upstream_status in {403, 429} else 502
+        return jsonify({
+            "error": "Artist catalog upstream request failed",
+            "upstream_status": upstream_status,
+            "upstream_body": upstream_body[:500],
+        }), status
 
     if catalog is None:
         return jsonify({"error": "Artist not found"}), 404
@@ -574,7 +589,9 @@ def get_cifra(artist, song):
         
         if 'error' in result:
             logger.error(f"Erro ao obter cifra: {result['error']}")
-            return jsonify(result), 500
+            upstream_status = result.get("upstream_status")
+            status = upstream_status if upstream_status in {403, 429} else 500
+            return jsonify(result), status
         
         logger.info(f"Cifra obtida com sucesso: {result.get('name', 'Unknown')}")
         return jsonify(result)

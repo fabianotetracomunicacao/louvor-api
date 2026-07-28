@@ -1,5 +1,9 @@
 import { parseCifraClub } from "../_shared/cifraImporter.ts";
-import { classifyUpstream, nextRunAt } from "../_shared/importQueue.ts";
+import {
+  classifyUpstream,
+  nextRunAt,
+  retryRunAt,
+} from "../_shared/importQueue.ts";
 
 export interface ImportClaim {
   jobId: string;
@@ -31,7 +35,6 @@ export interface SongPayload {
   original_key: string | null;
   style: string | null;
   youtube_links: string[];
-  type: "chords";
   cifraclub_slug: string;
   cifraclub_url: string;
   is_official: false;
@@ -49,6 +52,7 @@ export type ProcessStatus =
   | "discovered"
   | "imported"
   | "skipped"
+  | "retrying"
   | "failed"
   | "paused";
 
@@ -76,18 +80,40 @@ export interface WorkerDeps {
     claim: ImportClaim,
     reason: string,
   ): Promise<ProcessResult>;
+  retryDiscovery(
+    claim: ImportClaim,
+    reason: string,
+    nextRunAt: string,
+  ): Promise<ProcessResult>;
   findSlugDuplicate(slug: string): Promise<DuplicateSong | null>;
   fetchCifra(claim: ImportClaim): Promise<UpstreamResponse>;
   findCanonicalDuplicate(
     title: string,
     artist: string,
   ): Promise<DuplicateSong | null>;
-  insertSong(payload: SongPayload): Promise<{ id: string }>;
+  importSong(
+    claim: ImportClaim,
+    payload: SongPayload,
+    nextRunAt: string,
+  ): Promise<{
+    status: "imported" | "skipped";
+    songId?: string;
+    existingSongId?: string;
+  }>;
   finish(
     claim: ImportClaim,
     outcome: FinishOutcome,
   ): Promise<ProcessResult>;
-  pause(claim: ImportClaim, reason: string): Promise<ProcessResult>;
+  retryItem(
+    claim: ImportClaim,
+    reason: string,
+    nextRunAt: string,
+  ): Promise<ProcessResult>;
+  pause(
+    claim: ImportClaim,
+    reason: string,
+    nextRunAt: string,
+  ): Promise<ProcessResult>;
   now(): Date;
   random(): number;
 }
@@ -205,7 +231,6 @@ function buildSongPayload(
     original_key: parsed.originalKey,
     style: canonical.style,
     youtube_links: canonical.youtubeLinks,
-    type: "chords",
     cifraclub_slug: `${claim.artistSlug}/${claim.songSlug}`,
     cifraclub_url: canonical.sourceUrl,
     is_official: false,
@@ -219,10 +244,6 @@ function errorMessage(error: unknown): string {
     return error.message;
   }
   return String(error);
-}
-
-function isUniqueViolation(error: unknown): boolean {
-  return isRecord(error) && error.code === "23505";
 }
 
 async function finish(
@@ -248,13 +269,26 @@ async function processDiscovery(
   try {
     response = await deps.fetchCatalog(claim);
   } catch (error) {
-    return await deps.failDiscovery(claim, errorMessage(error));
+    const reason = errorMessage(error);
+    return await deps.retryDiscovery(
+      claim,
+      reason,
+      retryRunAt(deps.now(), claim.attempts ?? 1, deps.random).toISOString(),
+    );
   }
   const classification = classifyUpstream(response.status, response.body);
   if (classification === "blocked") {
     return await deps.pause(
       claim,
       `Catalog blocked with HTTP ${response.status}`,
+      retryRunAt(deps.now(), claim.attempts ?? 1, deps.random).toISOString(),
+    );
+  }
+  if (classification === "temporary") {
+    return await deps.retryDiscovery(
+      claim,
+      `Catalog request failed with HTTP ${response.status}`,
+      retryRunAt(deps.now(), claim.attempts ?? 1, deps.random).toISOString(),
     );
   }
   if (response.status < 200 || response.status >= 300) {
@@ -281,7 +315,10 @@ export async function processClaim(
   claim: ImportClaim,
   deps: WorkerDeps,
 ): Promise<ProcessResult> {
-  if (claim.needsDiscovery) return await processDiscovery(claim, deps);
+  if (claim.needsDiscovery) {
+    if (!claim.claimToken) throw new Error("Invalid discovery claim");
+    return await processDiscovery(claim, deps);
+  }
   if (!claim.itemId || !claim.songSlug || !claim.claimToken) {
     throw new Error("Invalid item claim");
   }
@@ -298,8 +335,11 @@ export async function processClaim(
     response = await deps.fetchCifra(claim);
   } catch (error) {
     const reason = errorMessage(error);
-    await finish(claim, deps, "failed", null, reason);
-    return { status: "failed", reason };
+    return await deps.retryItem(
+      claim,
+      reason,
+      retryRunAt(deps.now(), claim.attempts ?? 1, deps.random).toISOString(),
+    );
   }
 
   const classification = classifyUpstream(response.status, response.body);
@@ -307,6 +347,14 @@ export async function processClaim(
     return await deps.pause(
       claim,
       `Cifra blocked with HTTP ${response.status}`,
+      retryRunAt(deps.now(), claim.attempts ?? 1, deps.random).toISOString(),
+    );
+  }
+  if (classification === "temporary") {
+    return await deps.retryItem(
+      claim,
+      `Cifra request failed with HTTP ${response.status}`,
+      retryRunAt(deps.now(), claim.attempts ?? 1, deps.random).toISOString(),
     );
   }
   if (response.status < 200 || response.status >= 300) {
@@ -334,19 +382,17 @@ export async function processClaim(
   }
 
   try {
-    const song = await deps.insertSong(buildSongPayload(claim, canonical));
-    await finish(claim, deps, "imported", song.id, null);
-    return { status: "imported", songId: song.id };
+    const imported = await deps.importSong(
+      claim,
+      buildSongPayload(claim, canonical),
+      nextRunAt(deps.now(), deps.random).toISOString(),
+    );
+    return {
+      status: imported.status,
+      songId: imported.songId,
+      existingSongId: imported.existingSongId,
+    };
   } catch (error) {
-    if (isUniqueViolation(error)) {
-      const racingDuplicate = await deps.findSlugDuplicate(slug);
-      await finish(claim, deps, "skipped", null, null);
-      return {
-        status: "skipped",
-        existingSongId: racingDuplicate?.id,
-      };
-    }
-
     const reason = errorMessage(error);
     await finish(claim, deps, "failed", null, reason);
     return { status: "failed", reason };
@@ -396,7 +442,8 @@ export function createHandler(
 export interface ProductionConfig {
   supabaseUrl: string;
   serviceRoleKey: string;
-  cifraApiUrl: string;
+  cifraCatalogApiUrl: string;
+  cifraDetailApiUrl: string;
   leaseSeconds?: number;
   now?: () => Date;
   random?: () => number;
@@ -479,7 +526,8 @@ export function createProductionRuntime(
   validateSecret(secret: string): Promise<boolean>;
 } {
   const supabaseUrl = trimTrailingSlash(config.supabaseUrl);
-  const cifraApiUrl = trimTrailingSlash(config.cifraApiUrl);
+  const cifraCatalogApiUrl = trimTrailingSlash(config.cifraCatalogApiUrl);
+  const cifraDetailApiUrl = trimTrailingSlash(config.cifraDetailApiUrl);
   const restUrl = `${supabaseUrl}/rest/v1`;
   const leaseSeconds = config.leaseSeconds ?? 120;
   const databaseHeaders = {
@@ -549,15 +597,19 @@ export function createProductionRuntime(
     },
     fetchCatalog: (claim) =>
       upstreamRequest(
-        `${cifraApiUrl}/artists/${
+        `${cifraCatalogApiUrl}/artists/${
           encodeURIComponent(claim.artistSlug)
         }/catalog`,
       ),
     saveDiscovery: async (claim, discovery) => {
+      if (!claim.claimToken) {
+        throw new Error("Cannot complete an unfenced discovery claim");
+      }
       await databaseRequest(
         "rpc/complete_cifraclub_import_discovery",
         {
           p_job_id: claim.jobId,
+          p_claim_token: claim.claimToken,
           p_artist_name: discovery.artistName,
           p_songs: discovery.songs.map((song) => ({
             name: song.name,
@@ -568,30 +620,75 @@ export function createProductionRuntime(
       );
     },
     failDiscovery: async (claim, reason) => {
+      if (!claim.claimToken) {
+        throw new Error("Cannot fail an unfenced discovery claim");
+      }
       await databaseRequest(
         "rpc/fail_cifraclub_import_discovery",
-        { p_job_id: claim.jobId, p_error: reason },
+        {
+          p_job_id: claim.jobId,
+          p_claim_token: claim.claimToken,
+          p_error: reason,
+        },
       );
       return { status: "failed", reason };
+    },
+    retryDiscovery: async (claim, reason, scheduledAt) => {
+      if (!claim.claimToken) {
+        throw new Error("Cannot retry an unfenced discovery claim");
+      }
+      await databaseRequest(
+        "rpc/retry_cifraclub_import_discovery",
+        {
+          p_job_id: claim.jobId,
+          p_claim_token: claim.claimToken,
+          p_error: reason,
+          p_next_run_at: scheduledAt,
+        },
+      );
+      return { status: "retrying", reason };
     },
     findSlugDuplicate: (slug) => findDuplicate(slug, null, null),
     fetchCifra: (claim) =>
       upstreamRequest(
-        `${cifraApiUrl}/artists/${encodeURIComponent(claim.artistSlug)}/songs/${
-          encodeURIComponent(claim.songSlug ?? "")
-        }`,
+        `${cifraDetailApiUrl}/artists/${
+          encodeURIComponent(claim.artistSlug)
+        }/songs/${encodeURIComponent(claim.songSlug ?? "")}`,
       ),
     findCanonicalDuplicate: (title, artist) =>
       findDuplicate(null, title, artist),
-    insertSong: async (payload) => {
+    importSong: async (claim, payload, scheduledAt) => {
+      if (!claim.itemId || !claim.claimToken) {
+        throw new Error("Cannot import from an unfenced item claim");
+      }
       const data = await databaseRequest(
-        "songs?select=id",
-        payload,
-        { prefer: "return=representation" },
+        "rpc/import_cifraclub_song",
+        {
+          p_item_id: claim.itemId,
+          p_claim_token: claim.claimToken,
+          p_title: payload.title,
+          p_artist: payload.artist,
+          p_content: payload.content,
+          p_original_key: payload.original_key,
+          p_style: payload.style,
+          p_youtube_links: payload.youtube_links,
+          p_cifraclub_slug: payload.cifraclub_slug,
+          p_cifraclub_url: payload.cifraclub_url,
+          p_created_by: payload.created_by,
+          p_next_run_at: scheduledAt,
+        },
       );
-      const song = firstRow<{ id: string }>(data);
-      if (!song?.id) throw new Error("Song insert returned no id");
-      return song;
+      const result = firstRow<{
+        status: "imported" | "skipped";
+        song_id: string | null;
+        existing_song_id: string | null;
+      }>(data);
+      if (!result) throw new Error("Atomic import returned no result");
+      return {
+        status: result.status,
+        songId: result.song_id ?? undefined,
+        existingSongId: result.existing_song_id ?? undefined,
+      };
     },
     finish: async (claim, outcome) => {
       if (!claim.itemId || !claim.claimToken) {
@@ -614,7 +711,22 @@ export function createProductionRuntime(
         reason: outcome.error ?? undefined,
       };
     },
-    pause: async (claim, reason) => {
+    retryItem: async (claim, reason, scheduledAt) => {
+      if (!claim.itemId || !claim.claimToken) {
+        throw new Error("Cannot retry an unfenced item claim");
+      }
+      await databaseRequest(
+        "rpc/retry_cifraclub_import_item",
+        {
+          p_item_id: claim.itemId,
+          p_claim_token: claim.claimToken,
+          p_error: reason,
+          p_next_run_at: scheduledAt,
+        },
+      );
+      return { status: "retrying", reason };
+    },
+    pause: async (claim, reason, scheduledAt) => {
       await databaseRequest(
         "rpc/pause_cifraclub_import_job",
         {
@@ -622,6 +734,7 @@ export function createProductionRuntime(
           p_item_id: claim.itemId,
           p_claim_token: claim.claimToken,
           p_error: reason,
+          p_next_run_at: scheduledAt,
         },
       );
       return { status: "paused", reason };
@@ -643,7 +756,8 @@ export function productionConfigFromEnv(): ProductionConfig {
   return {
     supabaseUrl: requiredEnv("SUPABASE_URL"),
     serviceRoleKey: requiredEnv("SUPABASE_SERVICE_ROLE_KEY"),
-    cifraApiUrl: requiredEnv("CIFRA_API_URL"),
+    cifraCatalogApiUrl: requiredEnv("CIFRA_CATALOG_API_URL"),
+    cifraDetailApiUrl: requiredEnv("CIFRA_DETAIL_API_URL"),
     leaseSeconds: 120,
   };
 }

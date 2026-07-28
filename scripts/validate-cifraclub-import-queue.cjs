@@ -42,6 +42,10 @@ requirePattern(
   /from public\.cifraclub_import_items\s+where status = 'processing'\s+and lease_until >= now\(\)/s,
   'an active global processing lease blocking another job'
 );
+requirePattern(
+  /perform pg_advisory_xact_lock[\s\S]*update public\.cifraclub_import_items\s+set status = 'pending'[\s\S]*where status = 'processing'\s+and lease_until < now\(\)[\s\S]*select exists \(/,
+  'expired global processing items recovered before the active-item check'
+);
 
 requirePattern(
   /check \(status = 'imported' or song_id is null\)/,
@@ -73,6 +77,22 @@ requirePattern(
   'transactional discovery completion'
 );
 requirePattern(
+  /cifraclub_import_jobs \([\s\S]*claim_token uuid/,
+  'a fencing token stored for discovery claims'
+);
+requirePattern(
+  /set status = 'discovering',[\s\S]*claim_token = gen_random_uuid\(\)/,
+  'a fresh discovery fencing token'
+);
+requirePattern(
+  /complete_cifraclub_import_discovery\([\s\S]*p_claim_token uuid[\s\S]*and claim_token = p_claim_token/,
+  'discovery completion fenced by its token'
+);
+requirePattern(
+  /fail_cifraclub_import_discovery\([\s\S]*p_claim_token uuid[\s\S]*and claim_token = p_claim_token/,
+  'discovery failure fenced by its token'
+);
+requirePattern(
   /on conflict \(job_id, song_slug\)\s+do update set song_name = excluded\.song_name/s,
   'catalog item upsert'
 );
@@ -89,8 +109,33 @@ requirePattern(
   'blocked upstream pause handling'
 );
 requirePattern(
-  /and claim_token = p_claim_token/,
-  'pause-time claim-token fencing'
+  /pause_cifraclub_import_job\([\s\S]*p_next_run_at timestamptz[\s\S]*blocked_count = blocked_count \+ 1[\s\S]*next_run_at = p_next_run_at/,
+  'pause backoff and repeated-block accounting'
+);
+requirePattern(
+  /create or replace function public\.retry_cifraclub_import_item\(/,
+  'temporary item retry without failed counters'
+);
+requirePattern(
+  /create or replace function public\.retry_cifraclub_import_discovery\(/,
+  'temporary discovery retry'
+);
+requirePattern(
+  /create or replace function public\.resume_cifraclub_import\(/,
+  'an explicit paused-job resume path'
+);
+
+requirePattern(
+  /create or replace function public\.import_cifraclub_song\(/,
+  'atomic song import and item completion'
+);
+requirePattern(
+  /from public\.cifraclub_import_items[\s\S]*status = 'processing'[\s\S]*claim_token = p_claim_token[\s\S]*lease_until >= now\(\)[\s\S]*for update/,
+  'atomic import locks only the current unexpired claim'
+);
+requirePattern(
+  /insert into public\.songs[\s\S]*update public\.cifraclub_import_items[\s\S]*update public\.cifraclub_import_jobs/s,
+  'song insert, item completion and counters in one RPC transaction'
 );
 
 requirePattern(

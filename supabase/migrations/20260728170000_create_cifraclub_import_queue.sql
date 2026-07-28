@@ -16,8 +16,11 @@ create table public.cifraclub_import_jobs (
   imported_count integer not null default 0 check (imported_count >= 0),
   skipped_count integer not null default 0 check (skipped_count >= 0),
   failed_count integer not null default 0 check (failed_count >= 0),
+  blocked_count integer not null default 0 check (blocked_count >= 0),
+  discovery_attempts integer not null default 0 check (discovery_attempts >= 0),
   next_run_at timestamptz not null default now(),
   lease_until timestamptz,
+  claim_token uuid,
   last_error text,
   created_by uuid not null references auth.users(id),
   created_at timestamptz not null default now(),
@@ -153,6 +156,7 @@ begin
   update public.cifraclub_import_jobs
   set status = 'cancelled',
       lease_until = null,
+      claim_token = null,
       updated_at = now()
   where id = p_job_id
     and status = 'pending'
@@ -185,6 +189,7 @@ begin
   set status = 'pending',
       failed_count = 0,
       lease_until = null,
+      claim_token = null,
       last_error = null,
       next_run_at = now(),
       updated_at = now()
@@ -205,6 +210,47 @@ begin
     and status = 'failed';
 
   return retried_job;
+end;
+$$;
+
+create or replace function public.resume_cifraclub_import(
+  p_job_id uuid
+)
+returns public.cifraclub_import_jobs
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  resumed_job public.cifraclub_import_jobs;
+  has_items boolean;
+begin
+  if not public.is_super_admin() then
+    raise exception 'forbidden';
+  end if;
+
+  select exists (
+    select 1
+    from public.cifraclub_import_items
+    where job_id = p_job_id
+  ) into has_items;
+
+  update public.cifraclub_import_jobs
+  set status = case when has_items then 'processing' else 'pending' end,
+      next_run_at = now(),
+      lease_until = null,
+      claim_token = null,
+      last_error = null,
+      updated_at = now()
+  where id = p_job_id
+    and status = 'paused'
+  returning * into resumed_job;
+
+  if resumed_job.id is null then
+    raise exception 'job is not paused';
+  end if;
+
+  return resumed_job;
 end;
 $$;
 
@@ -233,6 +279,7 @@ declare
   lease_expires_at timestamptz;
   has_items boolean;
   has_active_item boolean;
+  has_active_discovery boolean;
 begin
   if p_lease_seconds is null or p_lease_seconds < 1 then
     raise exception 'lease duration must be positive';
@@ -242,6 +289,20 @@ begin
 
   perform pg_advisory_xact_lock(hashtext('cifraclub_import_work_claim'));
 
+  update public.cifraclub_import_items
+  set status = 'pending',
+      lease_until = null,
+      claim_token = null,
+      updated_at = now()
+  where status = 'processing'
+    and lease_until < now();
+
+  update public.cifraclub_import_jobs
+  set lease_until = null,
+      updated_at = now()
+  where status = 'processing'
+    and lease_until < now();
+
   select exists (
     select 1
     from public.cifraclub_import_items
@@ -249,7 +310,14 @@ begin
       and lease_until >= now()
   ) into has_active_item;
 
-  if has_active_item then
+  select exists (
+    select 1
+    from public.cifraclub_import_jobs
+    where status = 'discovering'
+      and lease_until >= now()
+  ) into has_active_discovery;
+
+  if has_active_item or has_active_discovery then
     return;
   end if;
 
@@ -276,8 +344,11 @@ begin
     update public.cifraclub_import_jobs
     set status = 'discovering',
         lease_until = lease_expires_at,
+        claim_token = gen_random_uuid(),
+        discovery_attempts = discovery_attempts + 1,
         updated_at = now()
-    where id = selected_job.id;
+    where id = selected_job.id
+    returning * into selected_job;
 
     return query
     select
@@ -288,8 +359,8 @@ begin
       null::uuid,
       null::text,
       null::text,
-      null::integer,
-      null::uuid,
+      selected_job.discovery_attempts,
+      selected_job.claim_token,
       true;
     return;
   end if;
@@ -317,6 +388,7 @@ begin
   update public.cifraclub_import_jobs
   set status = 'processing',
       lease_until = lease_expires_at,
+      claim_token = null,
       updated_at = now()
   where id = selected_job.id;
 
@@ -380,6 +452,7 @@ begin
   where id = p_item_id
     and status = 'processing'
     and claim_token = p_claim_token
+    and lease_until >= now()
   returning job_id into selected_job_id;
 
   if selected_job_id is null then
@@ -419,6 +492,7 @@ revoke all on function public.is_super_admin() from public;
 revoke all on function public.enqueue_cifraclub_import(text, text, integer) from public;
 revoke all on function public.cancel_cifraclub_import(uuid) from public;
 revoke all on function public.retry_cifraclub_import_failures(uuid) from public;
+revoke all on function public.resume_cifraclub_import(uuid) from public;
 revoke all on function public.claim_cifraclub_import_work(integer) from public;
 revoke all on function public.finish_cifraclub_import_item(uuid, uuid, text, uuid, text, timestamptz) from public;
 
@@ -426,6 +500,7 @@ grant execute on function public.is_super_admin() to authenticated;
 grant execute on function public.enqueue_cifraclub_import(text, text, integer) to authenticated;
 grant execute on function public.cancel_cifraclub_import(uuid) to authenticated;
 grant execute on function public.retry_cifraclub_import_failures(uuid) to authenticated;
+grant execute on function public.resume_cifraclub_import(uuid) to authenticated;
 grant execute on function public.claim_cifraclub_import_work(integer) to service_role;
 grant execute on function public.finish_cifraclub_import_item(uuid, uuid, text, uuid, text, timestamptz) to service_role;
 
@@ -482,6 +557,7 @@ $$;
 
 create or replace function public.complete_cifraclub_import_discovery(
   p_job_id uuid,
+  p_claim_token uuid,
   p_artist_name text,
   p_songs jsonb,
   p_next_run_at timestamptz
@@ -504,6 +580,7 @@ begin
   from public.cifraclub_import_jobs
   where id = p_job_id
     and status = 'discovering'
+    and claim_token = p_claim_token
     and lease_until >= now()
   for update;
 
@@ -537,6 +614,7 @@ begin
       status = case when discovered_count = 0 then 'completed' else 'processing' end,
       next_run_at = p_next_run_at,
       lease_until = null,
+      claim_token = null,
       last_error = null,
       updated_at = now()
   where id = p_job_id
@@ -548,6 +626,7 @@ $$;
 
 create or replace function public.fail_cifraclub_import_discovery(
   p_job_id uuid,
+  p_claim_token uuid,
   p_error text
 )
 returns public.cifraclub_import_jobs
@@ -561,10 +640,12 @@ begin
   update public.cifraclub_import_jobs
   set status = 'completed_with_errors',
       lease_until = null,
+      claim_token = null,
       last_error = nullif(btrim(coalesce(p_error, '')), ''),
       updated_at = now()
   where id = p_job_id
     and status = 'discovering'
+    and claim_token = p_claim_token
     and lease_until >= now()
   returning * into failed_job;
 
@@ -576,11 +657,245 @@ begin
 end;
 $$;
 
+create or replace function public.retry_cifraclub_import_discovery(
+  p_job_id uuid,
+  p_claim_token uuid,
+  p_error text,
+  p_next_run_at timestamptz
+)
+returns public.cifraclub_import_jobs
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  retried_job public.cifraclub_import_jobs;
+begin
+  if p_next_run_at is null then
+    raise exception 'next run is required';
+  end if;
+
+  update public.cifraclub_import_jobs
+  set status = 'pending',
+      next_run_at = p_next_run_at,
+      lease_until = null,
+      claim_token = null,
+      last_error = nullif(btrim(coalesce(p_error, '')), ''),
+      updated_at = now()
+  where id = p_job_id
+    and status = 'discovering'
+    and claim_token = p_claim_token
+    and lease_until >= now()
+  returning * into retried_job;
+
+  if retried_job.id is null then
+    raise exception 'discovery is not the current claim';
+  end if;
+
+  return retried_job;
+end;
+$$;
+
+create or replace function public.retry_cifraclub_import_item(
+  p_item_id uuid,
+  p_claim_token uuid,
+  p_error text,
+  p_next_run_at timestamptz
+)
+returns public.cifraclub_import_jobs
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  selected_job_id uuid;
+  retried_job public.cifraclub_import_jobs;
+begin
+  if p_next_run_at is null then
+    raise exception 'next run is required';
+  end if;
+
+  update public.cifraclub_import_items
+  set status = 'pending',
+      lease_until = null,
+      claim_token = null,
+      last_error = nullif(btrim(coalesce(p_error, '')), ''),
+      updated_at = now()
+  where id = p_item_id
+    and status = 'processing'
+    and claim_token = p_claim_token
+    and lease_until >= now()
+  returning job_id into selected_job_id;
+
+  if selected_job_id is null then
+    raise exception 'item is not the current claim';
+  end if;
+
+  update public.cifraclub_import_jobs
+  set status = 'processing',
+      next_run_at = p_next_run_at,
+      lease_until = null,
+      last_error = nullif(btrim(coalesce(p_error, '')), ''),
+      updated_at = now()
+  where id = selected_job_id
+  returning * into retried_job;
+
+  return retried_job;
+end;
+$$;
+
+create or replace function public.import_cifraclub_song(
+  p_item_id uuid,
+  p_claim_token uuid,
+  p_title text,
+  p_artist text,
+  p_content text,
+  p_original_key text,
+  p_style text,
+  p_youtube_links jsonb,
+  p_cifraclub_slug text,
+  p_cifraclub_url text,
+  p_created_by uuid,
+  p_next_run_at timestamptz
+)
+returns table (
+  status text,
+  song_id uuid,
+  existing_song_id uuid
+)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  selected_item public.cifraclub_import_items;
+  expected_creator uuid;
+  inserted_song_id uuid;
+  duplicate_song_id uuid;
+  import_status text;
+begin
+  if btrim(coalesce(p_title, '')) = ''
+    or btrim(coalesce(p_artist, '')) = ''
+    or btrim(coalesce(p_content, '')) = ''
+    or btrim(coalesce(p_cifraclub_slug, '')) = ''
+    or p_next_run_at is null then
+    raise exception 'invalid song import payload';
+  end if;
+
+  select item.* into selected_item
+  from public.cifraclub_import_items as item
+  where item.id = p_item_id
+    and item.status = 'processing'
+    and item.claim_token = p_claim_token
+    and item.lease_until >= now()
+  for update;
+
+  if selected_item.id is null then
+    raise exception 'item is not the current claim';
+  end if;
+
+  select job.created_by into expected_creator
+  from public.cifraclub_import_jobs as job
+  where job.id = selected_item.job_id
+  for update;
+
+  if expected_creator is distinct from p_created_by then
+    raise exception 'song creator does not match import job';
+  end if;
+
+  select song.id into duplicate_song_id
+  from public.songs as song
+  where song.cifraclub_slug = p_cifraclub_slug
+  limit 1;
+
+  if duplicate_song_id is null then
+    begin
+      insert into public.songs (
+        title,
+        artist,
+        content,
+        original_key,
+        style,
+        youtube_links,
+        cifraclub_slug,
+        cifraclub_url,
+        is_official,
+        created_by
+      )
+      values (
+        btrim(p_title),
+        btrim(p_artist),
+        p_content,
+        p_original_key,
+        nullif(btrim(coalesce(p_style, '')), ''),
+        coalesce(p_youtube_links, '[]'::jsonb),
+        btrim(p_cifraclub_slug),
+        p_cifraclub_url,
+        false,
+        p_created_by
+      )
+      returning id into inserted_song_id;
+      import_status := 'imported';
+    exception
+      when unique_violation then
+        select song.id into duplicate_song_id
+        from public.songs as song
+        where song.cifraclub_slug = p_cifraclub_slug
+        limit 1;
+        if duplicate_song_id is null then
+          raise;
+        end if;
+        import_status := 'skipped';
+    end;
+  else
+    import_status := 'skipped';
+  end if;
+
+  update public.cifraclub_import_items
+  set status = import_status,
+      song_id = case when import_status = 'imported' then inserted_song_id else null end,
+      last_error = null,
+      lease_until = null,
+      claim_token = null,
+      updated_at = now()
+  where id = selected_item.id;
+
+  update public.cifraclub_import_jobs as job
+  set imported_count = counts.imported_count,
+      skipped_count = counts.skipped_count,
+      failed_count = counts.failed_count,
+      status = case
+        when counts.pending_count > 0 then 'processing'
+        when counts.failed_count > 0 then 'completed_with_errors'
+        else 'completed'
+      end,
+      next_run_at = p_next_run_at,
+      lease_until = null,
+      last_error = null,
+      updated_at = now()
+  from (
+    select
+      count(*) filter (where item.status = 'imported')::integer as imported_count,
+      count(*) filter (where item.status = 'skipped')::integer as skipped_count,
+      count(*) filter (where item.status = 'failed')::integer as failed_count,
+      count(*) filter (where item.status in ('pending', 'processing'))::integer
+        as pending_count
+    from public.cifraclub_import_items as item
+    where item.job_id = selected_item.job_id
+  ) as counts
+  where job.id = selected_item.job_id;
+
+  return query
+  select import_status, inserted_song_id, duplicate_song_id;
+end;
+$$;
+
 create or replace function public.pause_cifraclub_import_job(
   p_job_id uuid,
   p_item_id uuid,
   p_claim_token uuid,
-  p_error text
+  p_error text,
+  p_next_run_at timestamptz
 )
 returns public.cifraclub_import_jobs
 language plpgsql
@@ -591,11 +906,11 @@ declare
   paused_job public.cifraclub_import_jobs;
   released_item_id uuid;
 begin
-  if p_item_id is not null then
-    if p_claim_token is null then
-      raise exception 'claim token is required';
-    end if;
+  if p_claim_token is null or p_next_run_at is null then
+    raise exception 'claim token and next run are required';
+  end if;
 
+  if p_item_id is not null then
     update public.cifraclub_import_items
     set status = 'pending',
         lease_until = null,
@@ -606,24 +921,30 @@ begin
       and job_id = p_job_id
       and status = 'processing'
       and claim_token = p_claim_token
+      and lease_until >= now()
     returning id into released_item_id;
 
     if released_item_id is null then
       raise exception 'item is not the current claim';
     end if;
-  elsif p_claim_token is not null then
-    raise exception 'discovery pause cannot include a claim token';
   end if;
 
   update public.cifraclub_import_jobs
   set status = 'paused',
       lease_until = null,
+      claim_token = null,
+      blocked_count = blocked_count + 1,
+      next_run_at = p_next_run_at,
       last_error = nullif(btrim(coalesce(p_error, '')), ''),
       updated_at = now()
   where id = p_job_id
     and (
       released_item_id is not null
-      or (status = 'discovering' and lease_until >= now())
+      or (
+        status = 'discovering'
+        and claim_token = p_claim_token
+        and lease_until >= now()
+      )
     )
   returning * into paused_job;
 
@@ -720,16 +1041,22 @@ $$;
 
 revoke all on function public.normalize_cifraclub_identity(text) from public;
 revoke all on function public.find_cifraclub_song_duplicate(text, text, text) from public;
-revoke all on function public.complete_cifraclub_import_discovery(uuid, text, jsonb, timestamptz) from public;
-revoke all on function public.fail_cifraclub_import_discovery(uuid, text) from public;
-revoke all on function public.pause_cifraclub_import_job(uuid, uuid, uuid, text) from public;
+revoke all on function public.complete_cifraclub_import_discovery(uuid, uuid, text, jsonb, timestamptz) from public;
+revoke all on function public.fail_cifraclub_import_discovery(uuid, uuid, text) from public;
+revoke all on function public.retry_cifraclub_import_discovery(uuid, uuid, text, timestamptz) from public;
+revoke all on function public.retry_cifraclub_import_item(uuid, uuid, text, timestamptz) from public;
+revoke all on function public.import_cifraclub_song(uuid, uuid, text, text, text, text, text, jsonb, text, text, uuid, timestamptz) from public;
+revoke all on function public.pause_cifraclub_import_job(uuid, uuid, uuid, text, timestamptz) from public;
 revoke all on function public.validate_cifraclub_import_worker_secret(text) from public;
 revoke all on function public.invoke_cifraclub_import_worker() from public;
 
 grant execute on function public.find_cifraclub_song_duplicate(text, text, text) to service_role;
-grant execute on function public.complete_cifraclub_import_discovery(uuid, text, jsonb, timestamptz) to service_role;
-grant execute on function public.fail_cifraclub_import_discovery(uuid, text) to service_role;
-grant execute on function public.pause_cifraclub_import_job(uuid, uuid, uuid, text) to service_role;
+grant execute on function public.complete_cifraclub_import_discovery(uuid, uuid, text, jsonb, timestamptz) to service_role;
+grant execute on function public.fail_cifraclub_import_discovery(uuid, uuid, text) to service_role;
+grant execute on function public.retry_cifraclub_import_discovery(uuid, uuid, text, timestamptz) to service_role;
+grant execute on function public.retry_cifraclub_import_item(uuid, uuid, text, timestamptz) to service_role;
+grant execute on function public.import_cifraclub_song(uuid, uuid, text, text, text, text, text, jsonb, text, text, uuid, timestamptz) to service_role;
+grant execute on function public.pause_cifraclub_import_job(uuid, uuid, uuid, text, timestamptz) to service_role;
 grant execute on function public.validate_cifraclub_import_worker_secret(text) to service_role;
 
 select cron.schedule(

@@ -7,11 +7,8 @@ from bs4 import BeautifulSoup
 
 CIFRACLUB_URL = "https://www.cifraclub.com.br/"
 DEFAULT_HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/131.0.0.0 Safari/537.36"
-    )
+    "User-Agent": "LouvorPlay-CifraImporter/1.0",
+    "Accept": "text/html,application/xhtml+xml",
 }
 
 # Configurar logging
@@ -48,7 +45,7 @@ class CifraClub():
 
     def _extract_with_requests(self, url: str, result: dict) -> bool:
         """Tentativa de extração rápida sem Selenium."""
-        response = requests.get(url, headers=DEFAULT_HEADERS, timeout=20, impersonate="chrome110")
+        response = requests.get(url, headers=DEFAULT_HEADERS, timeout=20)
         response.raise_for_status()
 
         soup = BeautifulSoup(response.text, "html.parser")
@@ -93,6 +90,9 @@ class CifraClub():
         except requests.RequestException as e:
             logger.error(f"Erro de requisição HTTP: {e}")
             result['error'] = f"Erro ao acessar o Cifra Club. Detalhe: {str(e)}"
+            upstream_response = getattr(e, "response", None)
+            result['upstream_status'] = getattr(upstream_response, "status_code", None)
+            result['upstream_body'] = (getattr(upstream_response, "text", "") or "")[:500]
         except Exception as e:
             logger.error(f"Erro inesperado: {e}")
             result['error'] = f"Erro inesperado: {str(e)}"
