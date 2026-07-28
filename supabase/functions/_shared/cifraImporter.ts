@@ -144,7 +144,17 @@ export function parseCifraClub(lines: string[]): ParsedCifra {
     }
 
     if (isChordLine(line)) {
-      const workingLine = mergeSeparatedChords(preCleanSlashes(line));
+      let workingLine = mergeSeparatedChords(preCleanSlashes(line));
+      const trimmedLine = line.trim();
+      if (trimmedLine.startsWith("(") && trimmedLine.endsWith(")")) {
+        const start = line.indexOf("(");
+        const end = line.lastIndexOf(")");
+        workingLine = line.substring(0, start) +
+          " " +
+          line.substring(start + 1, end) +
+          " " +
+          line.substring(end + 1);
+      }
       if (!originalKey) originalKey = keyFromChordLine(workingLine);
 
       const nextLine = index + 1 < lines.length ? lines[index + 1] : null;

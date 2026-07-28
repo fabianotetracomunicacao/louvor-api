@@ -23,6 +23,12 @@ Deno.test("converte acordes sobre a letra", () => {
   assertEquals(result.content, "[G]Deus de [D]promessas");
 });
 
+Deno.test("remove parenteses externos de linha de acordes", () => {
+  const result = parseCifraClub(["(G       D)", "Deus de promessas"]);
+
+  assertEquals(result.content, "D[G]eus de p[D]romessas");
+});
+
 Deno.test("preserva secoes e acordes isolados", () => {
   const result = parseCifraClub([
     "[Intro]",
