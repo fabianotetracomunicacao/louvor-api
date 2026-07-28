@@ -110,6 +110,53 @@ export const WhatsAppService = {
     },
 
     /**
+     * Enviar mensagem com botões rápidos via Z-API.
+     */
+    async sendButtonListMessage({ phone, message, buttons }) {
+        const config = await this.getZApiConfig();
+        if (!config.instanceId || !config.instanceToken) {
+            console.warn('[WhatsAppService] Instância ou Token Z-API não configurados.');
+            return { success: false, skipped: true, error: 'Z-API não configurada' };
+        }
+
+        const formattedPhone = normalizePhone(phone);
+        if (!formattedPhone) {
+            return { success: false, error: 'Telefone inválido' };
+        }
+
+        const url = `https://api.z-api.io/instances/${config.instanceId}/token/${config.instanceToken}/send-button-list`;
+        const headers = { 'Content-Type': 'application/json' };
+        if (config.clientToken) {
+            headers['Client-Token'] = config.clientToken;
+        }
+
+        try {
+            const res = await fetch(url, {
+                method: 'POST',
+                headers,
+                body: JSON.stringify({
+                    phone: formattedPhone,
+                    message,
+                    buttonList: { buttons },
+                    delayMessage: 2,
+                    delayTyping: 1
+                })
+            });
+
+            const body = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                console.error('[WhatsAppService] Z-API Button Error:', body);
+                return { success: false, status: res.status, error: body };
+            }
+
+            return { success: true, data: body };
+        } catch (err) {
+            console.error('[WhatsAppService] Falha de rede ao enviar botões:', err);
+            return { success: false, error: err.message };
+        }
+    },
+
+    /**
      * Enviar WhatsApp automático de confirmação para o Músico Escalado
      */
     async sendScaleConfirmation({ scaleId, musicianPhone, musicianName, roleName, setlistTitle, setlistDate }) {
@@ -128,12 +175,29 @@ export const WhatsAppService = {
             `📅 *${dateFormatted}*`,
             `🎸 *Sua função:* ${roleName || 'Músico(a)'}`,
             ``,
-            `Por favor, responda a esta mensagem com:`,
-            `*1* - Confirmar Presença ✅`,
-            `*2* - Não Poderei Tocar ❌`
+            `Toque em uma opção abaixo para responder.`
         ].join('\n');
 
-        const sendResult = await this.sendTextMessage({ phone: musicianPhone, message });
+        let sendResult = await this.sendButtonListMessage({
+            phone: musicianPhone,
+            message,
+            buttons: [
+                { id: `scale_confirm:${scaleId}`, label: 'Confirmar presença' },
+                { id: `scale_decline:${scaleId}`, label: 'Não poderei tocar' }
+            ]
+        });
+
+        if (!sendResult.success) {
+            const fallbackMessage = [
+                message,
+                ``,
+                `Se os botões não aparecerem, responda:`,
+                `*1* - Confirmar presença`,
+                `*2* - Não poderei tocar`
+            ].join('\n');
+
+            sendResult = await this.sendTextMessage({ phone: musicianPhone, message: fallbackMessage });
+        }
 
         if (sendResult.success) {
             await supabase

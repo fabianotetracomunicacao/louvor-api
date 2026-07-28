@@ -5,8 +5,20 @@ function getIncomingMessage(payload) {
     payload?.text?.message ||
       payload?.buttonReply?.message ||
       payload?.buttonReply?.text ||
+      payload?.buttonsResponseMessage?.message ||
       payload?.listResponseMessage?.title ||
       payload?.listResponseMessage?.message ||
+      '',
+  ).trim();
+}
+
+function getButtonId(payload) {
+  return String(
+    payload?.buttonReply?.id ||
+      payload?.buttonReply?.buttonId ||
+      payload?.buttonsResponseMessage?.buttonId ||
+      payload?.buttonsResponseMessage?.selectedButtonId ||
+      payload?.selectedButtonId ||
       '',
   ).trim();
 }
@@ -37,6 +49,7 @@ export default async function handler(req, res) {
   const { data, error } = await supabase.rpc('process_zapi_scale_response', {
     p_phone: payload.phone || '',
     p_message: getIncomingMessage(payload),
+    p_button_id: getButtonId(payload),
     p_secret: req.query?.secret || req.headers['x-zapi-webhook-secret'] || '',
   });
 

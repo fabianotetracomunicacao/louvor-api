@@ -44,6 +44,7 @@ $$;
 create or replace function public.process_zapi_scale_response(
   p_phone text,
   p_message text,
+  p_button_id text default '',
   p_secret text default ''
 )
 returns jsonb
@@ -54,7 +55,9 @@ as $$
 declare
   configured_secret text;
   cleaned_message text;
+  cleaned_button_id text;
   response_status text;
+  requested_scale_id uuid;
   normalized_phone text;
   without_country text;
   without_ninth text;
@@ -74,6 +77,7 @@ begin
     return jsonb_build_object('success', false, 'error', 'unauthorized');
   end if;
 
+  cleaned_button_id := lower(trim(coalesce(p_button_id, '')));
   cleaned_message := lower(trim(coalesce(p_message, '')));
   cleaned_message := translate(
     cleaned_message,
@@ -81,7 +85,13 @@ begin
     'aaaaaeeeeiiiiooooouuuucn'
   );
 
-  if cleaned_message ~ '^(1|sim|s|confirmo|confirmar|confirmado|presente|vou)(\s|$)' then
+  if cleaned_button_id ~ '^scale_confirm:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' then
+    response_status := 'CONFIRMED';
+    requested_scale_id := split_part(cleaned_button_id, ':', 2)::uuid;
+  elsif cleaned_button_id ~ '^scale_decline:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' then
+    response_status := 'DECLINED';
+    requested_scale_id := split_part(cleaned_button_id, ':', 2)::uuid;
+  elsif cleaned_message ~ '^(1|sim|s|confirmo|confirmar|confirmado|presente|vou)(\s|$)' then
     response_status := 'CONFIRMED';
   elsif cleaned_message ~ '^(2|nao|n|recuso|recusar|declino|declinar)(\s|$)'
      or cleaned_message like '%nao poderei%' then
@@ -119,19 +129,35 @@ begin
     without_country_and_ninth
   ], '');
 
-  select ss.id, ss.user_id, ss.setlist_id
-    into target_scale
-  from public.setlist_scales ss
-  join public.profiles p on p.id = ss.user_id
-  where ss.status = 'PENDING'
-    and (
-      regexp_replace(coalesce(p.phone, ''), '\D', '', 'g') = any(candidates)
-      or regexp_replace(coalesce(p.whatsapp, ''), '\D', '', 'g') = any(candidates)
-      or public.normalize_br_phone(p.phone) = any(candidates)
-      or public.normalize_br_phone(p.whatsapp) = any(candidates)
-    )
-  order by coalesce(ss.whatsapp_sent_at, ss.created_at) desc, ss.created_at desc
-  limit 1;
+  if requested_scale_id is not null then
+    select ss.id, ss.user_id, ss.setlist_id
+      into target_scale
+    from public.setlist_scales ss
+    join public.profiles p on p.id = ss.user_id
+    where ss.id = requested_scale_id
+      and ss.status = 'PENDING'
+      and (
+        regexp_replace(coalesce(p.phone, ''), '\D', '', 'g') = any(candidates)
+        or regexp_replace(coalesce(p.whatsapp, ''), '\D', '', 'g') = any(candidates)
+        or public.normalize_br_phone(p.phone) = any(candidates)
+        or public.normalize_br_phone(p.whatsapp) = any(candidates)
+      )
+    limit 1;
+  else
+    select ss.id, ss.user_id, ss.setlist_id
+      into target_scale
+    from public.setlist_scales ss
+    join public.profiles p on p.id = ss.user_id
+    where ss.status = 'PENDING'
+      and (
+        regexp_replace(coalesce(p.phone, ''), '\D', '', 'g') = any(candidates)
+        or regexp_replace(coalesce(p.whatsapp, ''), '\D', '', 'g') = any(candidates)
+        or public.normalize_br_phone(p.phone) = any(candidates)
+        or public.normalize_br_phone(p.whatsapp) = any(candidates)
+      )
+    order by coalesce(ss.whatsapp_sent_at, ss.created_at) desc, ss.created_at desc
+    limit 1;
+  end if;
 
   if target_scale.id is null then
     return jsonb_build_object('ignored', true, 'reason', 'pending_scale_not_found');
@@ -153,5 +179,5 @@ begin
 end;
 $$;
 
-grant execute on function public.process_zapi_scale_response(text, text, text) to anon;
-grant execute on function public.process_zapi_scale_response(text, text, text) to authenticated;
+grant execute on function public.process_zapi_scale_response(text, text, text, text) to anon;
+grant execute on function public.process_zapi_scale_response(text, text, text, text) to authenticated;
