@@ -59,7 +59,20 @@ export function UserEditModal({ user, onClose, onUserUpdated }) {
         active_church_id: user.active_church_id || '',
         phone: user.whatsapp || user.phone || '',
     });
-    const [selectedInstruments, setSelectedInstruments] = useState(user.available_instruments || []);
+
+    // Guarantee available_instruments is always a proper array,
+    // regardless of how Supabase/Postgres returns it (null, stringified JSON, etc.)
+    const parseInstruments = (raw) => {
+        if (!raw) return [];
+        if (Array.isArray(raw)) return raw;
+        if (typeof raw === 'string') {
+            try { const parsed = JSON.parse(raw); return Array.isArray(parsed) ? parsed : []; }
+            catch { return []; }
+        }
+        return [];
+    };
+
+    const [selectedInstruments, setSelectedInstruments] = useState(() => parseInstruments(user.available_instruments));
     const [instrumentsMetadata, setInstrumentsMetadata] = useState([]);
     const [churches, setChurches] = useState([]);
     const [newPassword, setNewPassword] = useState('');
