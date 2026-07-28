@@ -122,6 +122,28 @@ class ArtistCatalogApiTestCase(unittest.TestCase):
         self.assertEqual(response.json, {"error": "Artist not found"})
         self.assertEqual(self.requests_get.call_count, 1)
 
+    def test_catalog_preserves_upstream_rate_limit(self):
+        upstream = MagicMock(status_code=429, text="Too many requests")
+        error = api.RequestException("rate limited")
+        error.response = upstream
+        self.requests_get.side_effect = error
+
+        response = self.client.get("/api/artists/fernando/catalog")
+
+        self.assertEqual(response.status_code, 429)
+        self.assertTrue(response.json["blocked"])
+        self.assertEqual(response.json["upstream_status"], 429)
+
+    def test_catalog_classifies_http_200_challenge_as_blocked(self):
+        upstream = MagicMock(status_code=200, text="<html>captcha challenge</html>")
+        self.requests_get.return_value = upstream
+
+        response = self.client.get("/api/artists/fernando/catalog")
+
+        self.assertEqual(response.status_code, 403)
+        self.assertTrue(response.json["blocked"])
+        self.assertEqual(response.json["upstream_status"], 200)
+
     @patch("api.CifraClub.cifra")
     def test_detail_preserves_upstream_block_status(self, cifra):
         cifra.return_value = {
@@ -136,6 +158,10 @@ class ArtistCatalogApiTestCase(unittest.TestCase):
 
 
 class CifraClubHttpIdentityTestCase(unittest.TestCase):
+    def setUp(self):
+        api.app.config["TESTING"] = True
+        self.client = api.app.test_client()
+
     @patch("cifraclub.requests.get")
     def test_detail_fetch_uses_transparent_stable_identity(self, requests_get):
         response = MagicMock()
@@ -159,6 +185,39 @@ class CifraClubHttpIdentityTestCase(unittest.TestCase):
             kwargs["headers"]["User-Agent"],
             "LouvorPlay-CifraImporter/1.0",
         )
+
+    @patch("cifraclub.requests.get")
+    def test_detail_preserves_upstream_forbidden_and_rate_limit(self, requests_get):
+        for status in (403, 429):
+            with self.subTest(status=status):
+                response = MagicMock(status_code=status, text="blocked upstream")
+                requests_get.return_value = response
+
+                result = self.client.get("/artists/artista/songs/cancao")
+
+                self.assertEqual(result.status_code, status)
+                self.assertTrue(result.json["blocked"])
+                self.assertEqual(result.json["upstream_status"], status)
+
+    @patch("cifraclub.requests.get")
+    def test_detail_classifies_http_200_captcha_without_pre_as_blocked(
+        self,
+        requests_get,
+    ):
+        for marker in ("captcha", "security challenge"):
+            with self.subTest(marker=marker):
+                response = MagicMock(
+                    status_code=200,
+                    text=f"<html><body>{marker}</body></html>",
+                )
+                requests_get.return_value = response
+
+                result = self.client.get("/artists/artista/songs/cancao")
+
+                self.assertEqual(result.status_code, 403)
+                self.assertTrue(result.json["blocked"])
+                self.assertEqual(result.json["upstream_status"], 200)
+                self.assertIn(marker, result.json["upstream_body"])
 
 
 if __name__ == "__main__":

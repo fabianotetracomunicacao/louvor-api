@@ -3,6 +3,7 @@
 import logging
 import re
 from curl_cffi import requests
+from curl_cffi.requests.exceptions import RequestException
 from bs4 import BeautifulSoup
 
 CIFRACLUB_URL = "https://www.cifraclub.com.br/"
@@ -10,6 +11,10 @@ DEFAULT_HEADERS = {
     "User-Agent": "LouvorPlay-CifraImporter/1.0",
     "Accept": "text/html,application/xhtml+xml",
 }
+BLOCKED_BODY_PATTERN = re.compile(
+    r"\b(captcha|challenge|access denied|forbidden|too many requests|cloudflare)\b",
+    re.IGNORECASE,
+)
 
 # Configurar logging
 logging.basicConfig(
@@ -46,9 +51,17 @@ class CifraClub():
     def _extract_with_requests(self, url: str, result: dict) -> bool:
         """Tentativa de extração rápida sem Selenium."""
         response = requests.get(url, headers=DEFAULT_HEADERS, timeout=20)
+        response_body = response.text or ""
+        upstream_status = getattr(response, "status_code", None)
+        if upstream_status in {403, 429}:
+            result["error"] = "Cifra Club blocked the request"
+            result["blocked"] = True
+            result["upstream_status"] = upstream_status
+            result["upstream_body"] = response_body[:500]
+            return False
         response.raise_for_status()
 
-        soup = BeautifulSoup(response.text, "html.parser")
+        soup = BeautifulSoup(response_body, "html.parser")
 
         title_elem = soup.select_one("h1.t1") or soup.find("h1")
         artist_elem = soup.select_one("h2.t3") or soup.find("h2")
@@ -61,6 +74,11 @@ class CifraClub():
         # -----------------------------
 
         if not pre_elem:
+            if BLOCKED_BODY_PATTERN.search(response_body):
+                result["error"] = "Cifra Club blocked the request"
+                result["blocked"] = True
+                result["upstream_status"] = upstream_status
+                result["upstream_body"] = response_body[:500]
             return False
 
         result["name"] = title_elem.get_text(strip=True) if title_elem else "Título não encontrado"
@@ -85,14 +103,23 @@ class CifraClub():
                 logger.info("Extração concluída com sucesso!")
                 return result
 
+            if result.get("blocked"):
+                return result
+
             result['error'] = "Não foi possível extrair a cifra desta página sem o Selenium."
             
-        except requests.RequestException as e:
+        except RequestException as e:
             logger.error(f"Erro de requisição HTTP: {e}")
             result['error'] = f"Erro ao acessar o Cifra Club. Detalhe: {str(e)}"
             upstream_response = getattr(e, "response", None)
-            result['upstream_status'] = getattr(upstream_response, "status_code", None)
-            result['upstream_body'] = (getattr(upstream_response, "text", "") or "")[:500]
+            upstream_status = getattr(upstream_response, "status_code", None)
+            upstream_body = (getattr(upstream_response, "text", "") or "")[:500]
+            result['upstream_status'] = upstream_status
+            result['upstream_body'] = upstream_body
+            result['blocked'] = (
+                upstream_status in {403, 429}
+                or bool(BLOCKED_BODY_PATTERN.search(upstream_body))
+            )
         except Exception as e:
             logger.error(f"Erro inesperado: {e}")
             result['error'] = f"Erro inesperado: {str(e)}"

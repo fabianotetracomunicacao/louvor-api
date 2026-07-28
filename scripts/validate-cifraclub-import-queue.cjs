@@ -2,12 +2,79 @@ const fs = require('fs');
 
 const migrationPath = 'supabase/migrations/20260728170000_create_cifraclub_import_queue.sql';
 const sql = fs.readFileSync(migrationPath, 'utf8');
+const dockerfile = fs.readFileSync('Dockerfile', 'utf8');
+const passenger = fs.readFileSync('passenger_wsgi.py', 'utf8');
+const apiSource = fs.readFileSync('api.py', 'utf8');
+const cifraClubSource = fs.readFileSync('cifraclub.py', 'utf8');
 
 function requirePattern(pattern, behavior) {
   if (!pattern.test(sql)) {
     throw new Error(`Missing contract for ${behavior}`);
   }
 }
+
+function requireSourcePattern(source, pattern, behavior) {
+  if (!pattern.test(source)) {
+    throw new Error(`Missing production artifact contract for ${behavior}`);
+  }
+}
+
+function rejectSourcePattern(source, pattern, behavior) {
+  if (pattern.test(source)) {
+    throw new Error(`Forbidden production artifact contract: ${behavior}`);
+  }
+}
+
+requireSourcePattern(
+  dockerfile,
+  /^COPY requirements\.txt requirements\.txt$/m,
+  'Docker installs the root API requirements'
+);
+requireSourcePattern(
+  dockerfile,
+  /^COPY api\.py cifraclub\.py \.\/$/m,
+  'Docker packages the canonical root API modules'
+);
+requireSourcePattern(
+  dockerfile,
+  /^COPY static\/ \.\/static\/$/m,
+  'Docker packages root static assets'
+);
+rejectSourcePattern(
+  dockerfile,
+  /COPY app\/|app\/requirements\.txt/,
+  'Docker must not execute the divergent app copy'
+);
+requireSourcePattern(
+  passenger,
+  /sys\.path\.insert\(0, os\.path\.dirname\(os\.path\.abspath\(__file__\)\)\)/,
+  'Passenger imports the canonical root API'
+);
+rejectSourcePattern(
+  passenger,
+  /['"]\/app['"]/,
+  'Passenger must not import the divergent app copy'
+);
+requireSourcePattern(
+  apiSource,
+  /@app\.get\("\/api\/artists\/<artist_slug>\/catalog"\)/,
+  'the production catalog route'
+);
+requireSourcePattern(
+  apiSource,
+  /@app\.(?:get|route)\(['"]\/artists\/<artist>\/songs\/<song>['"]\)/,
+  'the production detail route'
+);
+rejectSourcePattern(
+  `${apiSource}\n${cifraClubSource}`,
+  /\bimpersonate\s*=/,
+  'production HTTP requests must not impersonate browsers'
+);
+requireSourcePattern(
+  `${apiSource}\n${cifraClubSource}`,
+  /LouvorPlay-CifraImporter\/1\.0/,
+  'a transparent stable production User-Agent'
+);
 
 requirePattern(
   /claim_token uuid/,
