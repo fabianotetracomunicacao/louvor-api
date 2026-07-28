@@ -180,40 +180,45 @@ export function SetlistManager({ playlistId, songs, onClose, onSave, initialData
         const role = selectedRoles.join(' + ') || 'Vocal';
         
         if (editingMemberId) {
-            // Updating existing member
+            // Updating existing member role — no WhatsApp notification for role changes
             const memberId = editingMemberId;
             setScaleMembers(prev => prev.map(m => m.id === memberId ? { ...m, role } : m));
             
-            // Call backend if needed
             if (!String(memberId).startsWith('temp_') && initialData?.id) {
                 try {
-                    // There isn't a direct 'updateUserRoleInSetlistScale' but we can use addUserToSetlistScale 
-                    // which usually handles UPSERT if implemented that way, or we just rely on local state until final save.
-                    // Actually, addUserToSetlistScale in storage.js might create duplicates if not careful.
-                    // Let's check storage.js or just assume we'll fix it if it's broken.
                     await addUserToSetlistScale(initialData.id, user.id, role);
                 } catch (e) {
                     console.error("Error updating role:", e);
                 }
             }
         } else {
-            // Adding new member
+            // Adding new member — optimistic UI first
             const tempId = 'temp_' + Date.now();
-            const newMember = {
-                id: tempId,
-                role: role,
-                user: { ...user }
-            };
-
-            // Optimistic Update
+            const newMember = { id: tempId, role, user: { ...user } };
             setScaleMembers(prev => [...prev, newMember]);
 
-            // Only call backend if we are in EDIT mode (have an ID)
             if (initialData?.id) {
                 try {
                     const result = await addUserToSetlistScale(initialData.id, user.id, role);
                     if (result) {
                         setScaleMembers(prev => prev.map(m => m.id === tempId ? { ...m, id: result.id } : m));
+
+                        // ✅ Send WhatsApp notification to the musician if they have a phone
+                        const musicianPhone = user.whatsapp || user.phone;
+                        if (musicianPhone && result.id) {
+                            WhatsAppService.sendScaleConfirmation({
+                                scaleId: result.id,
+                                musicianPhone,
+                                musicianName: user.name || user.full_name || user.email || 'Músico',
+                                roleName: role,
+                                setlistTitle: initialData?.name || initialData?.title || 'Culto',
+                                setlistDate: initialData?.date || scheduledDate
+                            }).catch(err =>
+                                console.warn('[SetlistManager] WhatsApp notification failed (non-critical):', err)
+                            );
+                        } else if (!musicianPhone) {
+                            console.info(`[SetlistManager] Músico ${user.name} sem WhatsApp cadastrado — notificação ignorada.`);
+                        }
                     }
                 } catch (error) {
                     console.error("Error adding to scale:", error);
