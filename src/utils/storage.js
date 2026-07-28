@@ -438,6 +438,8 @@ export async function saveSong(songData) {
         title: songData.title,
         artist: songData.artist,
         content: songData.content,
+        cifraclub_slug: songData.cifraclub_slug || songData.cifraclubSlug || null,
+        is_official: songData.is_official ?? songData.isOfficial ?? false,
         // created_by: handled below
 
         original_key: songData.originalKey, // Map to DB column
