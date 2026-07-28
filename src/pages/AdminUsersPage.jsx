@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { supabase } from '../supabaseClient';
 import { createClient } from '@supabase/supabase-js';
 import { useAuth } from '../contexts/AuthContext';
-import { Trash2, Shield, User, Loader, AlertTriangle, UserPlus, Check, X, Settings, Eye, EyeOff, BarChart3, DollarSign, Package } from 'lucide-react';
+import { Trash2, Shield, User, Loader, AlertTriangle, UserPlus, Check, X, Settings, Eye, EyeOff, BarChart3, DollarSign, Package, MessageCircle, Phone } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useNotification } from '../contexts/NotificationContext';
 import { UserEditModal } from '../components/UserEditModal';
@@ -405,6 +405,7 @@ export function AdminUsersPage() {
                     <thead className="bg-slate-50 dark:bg-slate-900/50 text-slate-500 dark:text-slate-400 uppercase text-xs font-bold">
                         <tr>
                             <th className="p-4 border-b border-slate-200 dark:border-slate-800">Email / Usuário</th>
+                            <th className="p-4 border-b border-slate-200 dark:border-slate-800 hidden sm:table-cell">WhatsApp</th>
                             <th className="p-4 border-b border-slate-200 dark:border-slate-800">Função</th>
                             <th className="p-4 border-b border-slate-200 dark:border-slate-800 text-right">Ações</th>
                         </tr>
@@ -441,6 +442,22 @@ export function AdminUsersPage() {
                                                 </div>
                                             </div>
                                         </div>
+                                    </td>
+                                    <td className="p-4 hidden sm:table-cell">
+                                        {(() => {
+                                            const hasPhone = !!(user.whatsapp || user.phone || user.phone_number);
+                                            return hasPhone ? (
+                                                <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800/60 text-xs font-bold">
+                                                    <MessageCircle size={12} />
+                                                    WhatsApp
+                                                </span>
+                                            ) : (
+                                                <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-400 border border-slate-200 dark:border-slate-700 text-xs">
+                                                    <Phone size={12} />
+                                                    Sem tel.
+                                                </span>
+                                            );
+                                        })()}
                                     </td>
                                     <td className="p-4">
                                         <div className="flex items-center gap-2">

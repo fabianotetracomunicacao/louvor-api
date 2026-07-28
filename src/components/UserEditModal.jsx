@@ -1,22 +1,31 @@
 import React, { useState, useEffect } from 'react';
-import { X, User, Mail, Shield, Lock, Trash2, Save, Music, Check } from 'lucide-react';
+import { X, User, Mail, Shield, Lock, Trash2, Save, Music, Check, Phone, MessageCircle, Info, AlertCircle, Eye, EyeOff, ChevronDown, ChevronUp } from 'lucide-react';
 import { supabase } from '../supabaseClient';
 import { getInstruments } from '../utils/storage';
+import { normalizePhone } from '../services/WhatsAppService';
 
 export function UserEditModal({ user, onClose, onUserUpdated }) {
     const [formData, setFormData] = useState({
-        name: user.name || '',
+        name: user.name || user.full_name || '',
         email: user.email || '',
-        role: user.role || 'musician',
+        role: user.role || 'WORSHIPPER',
         instrument: user.instrument || '',
-        active_church_id: user.active_church_id || ''
+        active_church_id: user.active_church_id || '',
+        phone: user.whatsapp || user.phone || user.phone_number || '',
     });
     const [selectedInstruments, setSelectedInstruments] = useState(user.available_instruments || []);
     const [instrumentsMetadata, setInstrumentsMetadata] = useState([]);
     const [churches, setChurches] = useState([]);
     const [newPassword, setNewPassword] = useState('');
+    const [showPassword, setShowPassword] = useState(false);
     const [loading, setLoading] = useState(false);
     const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+    const [activeSection, setActiveSection] = useState('profile'); // 'profile' | 'instruments' | 'security'
+
+    // Phone normalization preview
+    const phoneNormalized = formData.phone ? normalizePhone(formData.phone) : null;
+    const phoneIsValid = phoneNormalized && phoneNormalized.length >= 12;
+    const phoneWarning = formData.phone && !phoneIsValid;
 
     useEffect(() => {
         loadMetadata();
@@ -44,31 +53,33 @@ export function UserEditModal({ user, onClose, onUserUpdated }) {
     const handleUpdateUser = async () => {
         setLoading(true);
         try {
+            // Normalize the phone before saving
+            const savedPhone = formData.phone ? normalizePhone(formData.phone) : null;
+
             // 1. Update profile
             const { error: profileError } = await supabase
                 .from('profiles')
                 .update({
                     name: formData.name,
+                    full_name: formData.name,
                     role: formData.role,
                     instrument: formData.instrument,
                     available_instruments: selectedInstruments,
-                    active_church_id: formData.active_church_id || null
+                    active_church_id: formData.active_church_id || null,
+                    phone: savedPhone || null,
+                    phone_number: savedPhone || null,
+                    whatsapp: savedPhone || null,
                 })
                 .eq('id', user.id);
 
             if (profileError) throw profileError;
 
-            // 2. Update Church Membership (SaaS)
+            // 2. Update Church Membership
             if (formData.active_church_id && formData.role !== 'super_admin') {
-                // Determine church role
                 let churchRole = 'WORSHIPPER';
                 if (formData.role === 'CHURCH_ADMIN') churchRole = 'CHURCH_ADMIN';
                 if (formData.role === 'WORSHIP_LEADER') churchRole = 'WORSHIP_LEADER';
 
-                // Upsert membership (using UNIQUE constraint on church_id, user_id is tricky if we want to CHANGE the church)
-                // Better approach: If they already had a church, update it. If not, insert it.
-                // But for simplicity, we'll try to find any membership and update it, or insert.
-                
                 const { data: existing } = await supabase
                     .from('church_user_memberships')
                     .select('id, church_id')
@@ -76,17 +87,12 @@ export function UserEditModal({ user, onClose, onUserUpdated }) {
                     .maybeSingle();
 
                 if (existing) {
-                    // Update existing membership
                     const { error: memError } = await supabase
                         .from('church_user_memberships')
-                        .update({ 
-                            church_id: formData.active_church_id, 
-                            role: churchRole 
-                        })
+                        .update({ church_id: formData.active_church_id, role: churchRole })
                         .eq('id', existing.id);
                     if (memError) console.error('Error updating membership:', memError);
                 } else {
-                    // Create new membership
                     const { error: memError } = await supabase
                         .from('church_user_memberships')
                         .insert({
@@ -99,7 +105,7 @@ export function UserEditModal({ user, onClose, onUserUpdated }) {
                 }
             }
 
-            // Update password if provided
+            // 3. Update password if provided
             if (newPassword.trim()) {
                 const { error: passwordError } = await supabase.rpc('update_user_password_by_admin', {
                     target_user_id: user.id,
@@ -108,7 +114,6 @@ export function UserEditModal({ user, onClose, onUserUpdated }) {
                 if (passwordError) throw passwordError;
             }
 
-            alert('Usuário atualizado com sucesso!');
             onUserUpdated();
             onClose();
         } catch (error) {
@@ -122,15 +127,13 @@ export function UserEditModal({ user, onClose, onUserUpdated }) {
     const handleDeleteUser = async () => {
         setLoading(true);
         try {
-            // Use the existing RPC function for deletion
             const { error } = await supabase.rpc('delete_user_with_transfer', {
                 target_user_id: user.id,
-                successor_id: null // null means no songs to transfer
+                successor_id: null
             });
 
             if (error) throw error;
 
-            alert('Usuário excluído com sucesso!');
             onUserUpdated();
             onClose();
         } catch (error) {
@@ -141,204 +144,274 @@ export function UserEditModal({ user, onClose, onUserUpdated }) {
         }
     };
 
+    const SectionToggle = ({ id, label, icon: Icon, children }) => {
+        const isOpen = activeSection === id;
+        return (
+            <div className="border border-slate-700 rounded-xl overflow-hidden">
+                <button
+                    type="button"
+                    onClick={() => setActiveSection(isOpen ? null : id)}
+                    className="w-full flex items-center justify-between px-4 py-3 bg-slate-900/60 hover:bg-slate-900/80 text-left transition"
+                >
+                    <span className="flex items-center gap-2 text-sm font-bold text-slate-200">
+                        <Icon size={16} className="text-purple-400 shrink-0" />
+                        {label}
+                    </span>
+                    {isOpen ? <ChevronUp size={16} className="text-slate-400" /> : <ChevronDown size={16} className="text-slate-400" />}
+                </button>
+                {isOpen && (
+                    <div className="p-4 space-y-4 bg-slate-900/30 border-t border-slate-700">
+                        {children}
+                    </div>
+                )}
+            </div>
+        );
+    };
+
+    const InputField = ({ label, icon: Icon, note, children }) => (
+        <div className="space-y-1.5">
+            <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider">
+                {label}
+            </label>
+            <div className="relative">
+                {Icon && <Icon className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" size={16} />}
+                {children}
+            </div>
+            {note && <p className="text-[10px] text-slate-500 italic pl-1">{note}</p>}
+        </div>
+    );
+
+    const inputClass = (hasIcon = true) =>
+        `w-full ${hasIcon ? 'pl-9' : 'pl-3'} pr-4 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 transition placeholder:text-slate-600`;
+
     return (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-            <div className="bg-slate-800 rounded-xl shadow-2xl border border-slate-700 max-w-md w-full max-h-[90vh] overflow-y-auto">
+            <div className="bg-slate-800 rounded-2xl shadow-2xl border border-slate-700 max-w-md w-full max-h-[92vh] flex flex-col">
+
                 {/* Header */}
-                <div className="flex items-center justify-between p-6 border-b border-slate-700">
-                    <h2 className="text-xl font-bold text-white flex items-center gap-2">
-                        <User size={20} className="text-purple-400" />
-                        Editar Usuário
-                    </h2>
-                    <button
-                        onClick={onClose}
-                        className="text-slate-400 hover:text-white transition"
-                    >
+                <div className="flex items-center justify-between p-5 border-b border-slate-700 shrink-0">
+                    <div>
+                        <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                            <User size={18} className="text-purple-400" />
+                            Editar Usuário
+                        </h2>
+                        <p className="text-xs text-slate-400 mt-0.5 truncate max-w-[300px]">{user.email}</p>
+                    </div>
+                    <button onClick={onClose} className="text-slate-400 hover:text-white transition p-1 rounded-lg hover:bg-slate-700">
                         <X size={20} />
                     </button>
                 </div>
 
-                {/* Form */}
-                <div className="p-6 space-y-4">
-                    {/* Name */}
-                    <div>
-                        <label className="block text-sm font-medium text-slate-300 mb-2">
-                            Nome
-                        </label>
-                        <div className="relative">
-                            <User className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                {/* Scrollable Content */}
+                <div className="flex-1 overflow-y-auto p-5 space-y-3">
+
+                    {/* === PROFILE SECTION === */}
+                    <SectionToggle id="profile" label="Dados do Perfil" icon={User}>
+
+                        <InputField label="Nome Completo" icon={User}>
                             <input
                                 type="text"
                                 value={formData.name}
                                 onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                                className="w-full pl-10 pr-4 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-purple-500"
+                                className={inputClass()}
                                 placeholder="Nome do usuário"
                             />
-                        </div>
-                    </div>
+                        </InputField>
 
-                    {/* Email (Read-only) */}
-                    <div>
-                        <label className="block text-sm font-medium text-slate-300 mb-2">
-                            Email (somente leitura)
-                        </label>
-                        <div className="relative">
-                            <Mail className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                        <InputField label="E-mail (somente leitura)" icon={Mail}>
                             <input
                                 type="email"
                                 value={user.email}
                                 disabled
-                                className="w-full pl-10 pr-4 py-2 bg-slate-900/50 border border-slate-700 rounded-lg text-slate-400 cursor-not-allowed"
+                                className={`${inputClass()} text-slate-500 cursor-not-allowed border-slate-800`}
                             />
-                        </div>
-                    </div>
+                        </InputField>
 
-                    {/* Church Selector */}
-                    <div>
-                        <label className="block text-sm font-medium text-slate-300 mb-2">
-                            Igreja Vinculada (Opcional)
-                        </label>
-                        <div className="relative">
-                            <Shield className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                        {/* WhatsApp / Phone Field */}
+                        <div className="space-y-1.5">
+                            <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2">
+                                <MessageCircle size={13} className="text-emerald-400" />
+                                WhatsApp / Telefone
+                            </label>
+                            <div className="relative">
+                                <Phone className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" size={16} />
+                                <input
+                                    type="tel"
+                                    value={formData.phone}
+                                    onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
+                                    placeholder="(11) 90000-0000"
+                                    className={`${inputClass()} ${phoneWarning ? 'border-amber-600 focus:ring-amber-500' : phoneIsValid ? 'border-emerald-700 focus:ring-emerald-500' : ''}`}
+                                />
+                            </div>
+                            {/* Normalized number preview */}
+                            {formData.phone && (
+                                <div className={`flex items-center gap-1.5 text-[11px] px-2 py-1 rounded-lg border ${
+                                    phoneIsValid
+                                        ? 'bg-emerald-900/20 border-emerald-800/60 text-emerald-400'
+                                        : 'bg-amber-900/20 border-amber-800/60 text-amber-400'
+                                }`}>
+                                    {phoneIsValid
+                                        ? <Check size={12} />
+                                        : <AlertCircle size={12} />
+                                    }
+                                    {phoneIsValid
+                                        ? <>Número para WhatsApp: <strong className="font-mono">+{phoneNormalized}</strong></>
+                                        : 'Número inválido — verifique DDD + 9 dígitos (Brasil)'
+                                    }
+                                </div>
+                            )}
+                            {!formData.phone && (
+                                <p className="text-[10px] text-slate-500 italic flex items-center gap-1">
+                                    <Info size={10} />
+                                    Sem WhatsApp → notificações automáticas de escala serão ignoradas
+                                </p>
+                            )}
+                        </div>
+
+                        <InputField label="Igreja Vinculada" icon={Shield}>
                             <select
                                 disabled={formData.role === 'super_admin'}
                                 value={formData.active_church_id}
                                 onChange={(e) => setFormData({ ...formData, active_church_id: e.target.value })}
-                                className="w-full pl-10 pr-4 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-purple-500 disabled:opacity-50"
+                                className={`${inputClass()} appearance-none disabled:opacity-50`}
                             >
                                 <option value="">Nenhuma / Usuário Individual</option>
                                 {churches.map(church => (
                                     <option key={church.id} value={church.id}>{church.name}</option>
                                 ))}
                             </select>
-                        </div>
-                    </div>
+                        </InputField>
 
-                    {/* Role */}
-                    <div>
-                        <label className="block text-sm font-medium text-slate-300 mb-2">
-                            Tipo de Usuário (Cargo Global)
-                        </label>
-                        <div className="relative">
-                            <Shield className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                        <InputField label="Cargo / Tipo de Usuário" icon={Shield}>
                             <select
                                 value={formData.role}
                                 onChange={(e) => {
                                     const role = e.target.value;
-                                    setFormData({ ...formData, role: role });
-                                    if (role === 'super_admin') setFormData(prev => ({ ...prev, role: role, active_church_id: '' }));
+                                    setFormData(prev => ({
+                                        ...prev,
+                                        role,
+                                        active_church_id: role === 'super_admin' ? '' : prev.active_church_id
+                                    }));
                                 }}
-                                className="w-full pl-10 pr-4 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-purple-500"
+                                className={`${inputClass()} appearance-none`}
                             >
                                 <option value="super_admin">Super Admin (Plataforma)</option>
                                 <option value="CHURCH_ADMIN">Responsável da Igreja</option>
                                 <option value="WORSHIP_LEADER">Líder de Adoração</option>
                                 <option value="WORSHIPPER">Adorador</option>
                             </select>
-                        </div>
-                    </div>
+                        </InputField>
 
-                    {/* Instrument */}
-                    <div>
-                        <label className="block text-sm font-medium text-slate-300 mb-2">
-                            Instrumento Principal
-                        </label>
-                        <div className="relative">
-                            <Music className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                    </SectionToggle>
+
+                    {/* === INSTRUMENTS SECTION === */}
+                    <SectionToggle id="instruments" label="Instrumentos e Habilidades" icon={Music}>
+
+                        <InputField label="Instrumento Principal" icon={Music}>
                             <select
                                 value={formData.instrument}
                                 onChange={(e) => {
                                     const val = e.target.value;
                                     setFormData({ ...formData, instrument: val });
                                     if (val && !selectedInstruments.includes(val)) {
-                                        setSelectedInstruments([...selectedInstruments, val]);
+                                        setSelectedInstruments(prev => [...prev, val]);
                                     }
                                 }}
-                                className="w-full pl-10 pr-4 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-purple-500 appearance-none"
+                                className={`${inputClass()} appearance-none`}
                             >
                                 <option value="">Selecione o instrumento principal...</option>
                                 {instrumentsMetadata.map(inst => (
                                     <option key={inst.id} value={inst.name}>{inst.name}</option>
                                 ))}
                             </select>
-                        </div>
-                    </div>
+                        </InputField>
 
-                    {/* Available Instruments (Multi-Select Tags) */}
-                    <div>
-                        <label className="block text-xs font-bold uppercase text-slate-500 mb-2">
-                            Habilidades / Instrumentos Disponíveis
-                        </label>
-                        <div className="flex flex-wrap gap-2 p-3 bg-slate-900/50 border border-slate-700 rounded-lg min-h-[60px]">
-                            {instrumentsMetadata.length === 0 && (
-                                <span className="text-slate-500 text-xs italic">Nenhum instrumento cadastrado no sistema.</span>
-                            )}
-                            {instrumentsMetadata.map(inst => {
-                                const isMain = inst.name === formData.instrument;
-                                const isSelected = selectedInstruments.includes(inst.name) || isMain;
-                                return (
-                                    <button
-                                        key={inst.id}
-                                        onClick={() => !isMain && toggleInstrument(inst.name)}
-                                        disabled={isMain}
-                                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition-all ${
-                                            isSelected
-                                                ? 'bg-purple-600 text-white border-purple-500'
-                                                : 'bg-slate-800 text-slate-400 border-slate-700 hover:border-slate-500'
-                                        } border ${isMain ? 'ring-2 ring-purple-400/50 border-purple-400 cursor-default font-black' : ''}`}
-                                    >
-                                        {isSelected && <Check size={12} />}
-                                        {inst.name}
-                                        {isMain && <span className="ml-1 text-[8px] uppercase opacity-70">(Principal)</span>}
-                                    </button>
-                                );
-                            })}
+                        <div className="space-y-2">
+                            <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider">
+                                Instrumentos Disponíveis
+                            </label>
+                            <div className="flex flex-wrap gap-2 p-3 bg-slate-900/50 border border-slate-700 rounded-lg min-h-[56px]">
+                                {instrumentsMetadata.length === 0 && (
+                                    <span className="text-slate-500 text-xs italic">Nenhum instrumento cadastrado.</span>
+                                )}
+                                {instrumentsMetadata.map(inst => {
+                                    const isMain = inst.name === formData.instrument;
+                                    const isSelected = selectedInstruments.includes(inst.name) || isMain;
+                                    return (
+                                        <button
+                                            key={inst.id}
+                                            type="button"
+                                            onClick={() => !isMain && toggleInstrument(inst.name)}
+                                            disabled={isMain}
+                                            className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold transition-all border ${
+                                                isSelected
+                                                    ? 'bg-purple-600 text-white border-purple-500'
+                                                    : 'bg-slate-800 text-slate-400 border-slate-700 hover:border-slate-500'
+                                            } ${isMain ? 'ring-2 ring-purple-400/50 border-purple-400 cursor-default' : ''}`}
+                                        >
+                                            {isSelected && <Check size={11} />}
+                                            {inst.name}
+                                            {isMain && <span className="ml-1 text-[8px] uppercase opacity-70">(Principal)</span>}
+                                        </button>
+                                    );
+                                })}
+                            </div>
                         </div>
-                        <p className="text-[10px] text-slate-500 mt-1 italic">
-                            Selecione todos os instrumentos que este usuário pode tocar ou funções que pode realizar.
-                        </p>
-                    </div>
 
-                    {/* New Password */}
-                    <div>
-                        <label className="block text-sm font-medium text-slate-300 mb-2">
-                            Nova Senha (deixe em branco para não alterar)
-                        </label>
-                        <div className="relative">
-                            <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-                            <input
-                                type="password"
-                                value={newPassword}
-                                onChange={(e) => setNewPassword(e.target.value)}
-                                className="w-full pl-10 pr-4 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-purple-500"
-                                placeholder="••••••••"
-                            />
+                    </SectionToggle>
+
+                    {/* === SECURITY SECTION === */}
+                    <SectionToggle id="security" label="Segurança" icon={Lock}>
+                        <div className="space-y-1.5">
+                            <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider">
+                                Nova Senha
+                            </label>
+                            <div className="relative">
+                                <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" size={16} />
+                                <input
+                                    type={showPassword ? 'text' : 'password'}
+                                    value={newPassword}
+                                    onChange={(e) => setNewPassword(e.target.value)}
+                                    className="w-full pl-9 pr-10 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 transition"
+                                    placeholder="Deixe em branco para não alterar"
+                                />
+                                <button
+                                    type="button"
+                                    onClick={() => setShowPassword(!showPassword)}
+                                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 transition"
+                                >
+                                    {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                                </button>
+                            </div>
+                            <p className="text-[10px] text-slate-500 italic">
+                                Mínimo 6 caracteres. Deixe em branco para não alterar a senha atual.
+                            </p>
                         </div>
-                    </div>
+                    </SectionToggle>
 
                 </div>
 
                 {/* Sticky Footer */}
-                <div className="p-6 border-t border-slate-700 bg-slate-800 sticky bottom-0 flex flex-col gap-3">
+                <div className="p-5 border-t border-slate-700 bg-slate-800 shrink-0 flex flex-col gap-2.5">
                     <button
                         onClick={handleUpdateUser}
                         disabled={loading}
                         className="w-full bg-purple-600 hover:bg-purple-700 text-white py-3 px-4 rounded-xl font-bold transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 shadow-lg shadow-purple-600/20"
                     >
-                        <Save size={18} />
+                        <Save size={17} />
                         {loading ? 'Salvando...' : 'Salvar Alterações'}
                     </button>
 
                     {!showDeleteConfirm ? (
                         <button
                             onClick={() => setShowDeleteConfirm(true)}
-                            className="w-full bg-transparent hover:bg-red-600/10 text-red-400 py-2 px-4 rounded-lg font-medium transition flex items-center justify-center gap-2 border border-red-600/20"
+                            className="w-full bg-transparent hover:bg-red-600/10 text-red-400 py-2 px-4 rounded-lg font-medium transition flex items-center justify-center gap-2 border border-red-600/20 text-sm"
                         >
-                            <Trash2 size={16} />
+                            <Trash2 size={15} />
                             Excluir Usuário
                         </button>
                     ) : (
-                        <div className="bg-red-900/20 p-4 rounded-xl border border-red-500/20 space-y-3 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                        <div className="bg-red-900/20 p-4 rounded-xl border border-red-500/20 space-y-3">
                             <p className="text-xs text-red-300 text-center font-bold uppercase tracking-tight">
                                 Confirmar exclusão permanente?
                             </p>
@@ -347,12 +420,12 @@ export function UserEditModal({ user, onClose, onUserUpdated }) {
                                     onClick={() => setShowDeleteConfirm(false)}
                                     className="flex-1 bg-slate-700 hover:bg-slate-600 text-white py-2 rounded-lg font-bold text-sm transition"
                                 >
-                                    Não
+                                    Cancelar
                                 </button>
                                 <button
                                     onClick={handleDeleteUser}
                                     disabled={loading}
-                                    className="flex-1 bg-red-600 hover:bg-red-700 text-white py-2 rounded-lg font-bold text-sm transition shadow-lg shadow-red-600/20"
+                                    className="flex-1 bg-red-600 hover:bg-red-700 text-white py-2 rounded-lg font-bold text-sm transition shadow-lg shadow-red-600/20 disabled:opacity-50"
                                 >
                                     Sim, Excluir
                                 </button>

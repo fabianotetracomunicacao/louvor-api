@@ -31,12 +31,13 @@ export function CompleteProfilePage() {
                 // Fetch profile data to prefill if exists
                 const { data, error } = await supabase
                     .from('profiles')
-                    .select('phone_number, instrument')
+                    .select('phone_number, phone, whatsapp, instrument')
                     .eq('id', user.id)
                     .single();
                     
                 if (data && !error) {
-                    if (data.phone_number) setPhone(data.phone_number);
+                    const savedPhone = data.whatsapp || data.phone || data.phone_number || '';
+                    if (savedPhone) setPhone(savedPhone);
                     if (data.instrument) setInstrument(data.instrument);
                 }
             }
@@ -69,11 +70,29 @@ export function CompleteProfilePage() {
                 if (authError) throw authError;
             }
 
-            // 2. Update Profile additional info
+            // 2. Update Profile additional info - normalize phone for WhatsApp notifications
+            const normalizePhone = (raw) => {
+                if (!raw) return null;
+                let digits = String(raw).replace(/\D/g, '');
+                if (!digits) return null;
+                if (!digits.startsWith('55')) digits = `55${digits}`;
+                // 55 + DDD(2) + 8 digits = 12 → insert 9 before the 8
+                if (digits.length === 12) {
+                    const ddd = digits.slice(2, 4);
+                    const rest = digits.slice(4);
+                    digits = `55${ddd}9${rest}`;
+                }
+                return digits;
+            };
+
+            const normalizedPhone = normalizePhone(phone);
+
             const { error: profileError } = await supabase
                 .from('profiles')
                 .update({
-                    phone_number: phone,
+                    phone_number: normalizedPhone,
+                    phone: normalizedPhone,
+                    whatsapp: normalizedPhone,
                     instrument: instrument
                 })
                 .eq('id', user.id);
