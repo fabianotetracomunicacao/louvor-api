@@ -434,12 +434,29 @@ export async function saveSong(songData) {
     // but assuming we match schema or Supabase handles it if we structured the table correctly.
     // Our scaffold schema used snake_case for columns like original_key.
 
+    const hasCifraclubSlug = songData.cifraclub_slug !== undefined || songData.cifraclubSlug !== undefined;
+    const cifraclubSlug = songData.cifraclub_slug !== undefined
+        ? songData.cifraclub_slug
+        : songData.cifraclubSlug;
+    const hasOfficial = songData.is_official !== undefined || songData.isOfficial !== undefined;
+    const isOfficial = songData.is_official !== undefined
+        ? songData.is_official
+        : songData.isOfficial;
+    const metadataPayload = songData.id
+        ? {
+            ...(hasCifraclubSlug ? { cifraclub_slug: cifraclubSlug } : {}),
+            ...(hasOfficial ? { is_official: isOfficial } : {}),
+        }
+        : {
+            cifraclub_slug: hasCifraclubSlug ? cifraclubSlug : null,
+            is_official: hasOfficial ? isOfficial : false,
+        };
+
     const dbPayload = {
         title: songData.title,
         artist: songData.artist,
         content: songData.content,
-        cifraclub_slug: songData.cifraclub_slug || songData.cifraclubSlug || null,
-        is_official: songData.is_official ?? songData.isOfficial ?? false,
+        ...metadataPayload,
         // created_by: handled below
 
         original_key: songData.originalKey, // Map to DB column
@@ -1692,6 +1709,9 @@ function mapSongFromDb(dbSong) {
         }
     }
 
+    const cifraclubSlug = dbSong.cifraclub_slug ?? dbSong.cifraclubSlug ?? null;
+    const isOfficial = dbSong.is_official ?? dbSong.isOfficial ?? false;
+
     return {
         id: dbSong.id,
         title: dbSong.title,
@@ -1713,7 +1733,10 @@ function mapSongFromDb(dbSong) {
         creatorName: creatorName, // Derived Name
         creator: dbSong.creator || null, // Ensure RepertoirePage can access creator.name/email
         duration: dbSong.duration,
-        isOfficial: dbSong.is_official, // NEW
+        cifraclub_slug: cifraclubSlug,
+        cifraclubSlug,
+        is_official: isOfficial,
+        isOfficial,
         projectionContent: dbSong.projection_content,
         type: dbSong.type || 'chords', // NEW: chords or lyrics
 

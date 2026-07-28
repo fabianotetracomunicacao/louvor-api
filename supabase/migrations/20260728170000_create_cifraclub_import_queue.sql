@@ -61,6 +61,36 @@ create unique index cifraclub_import_only_one_processing_item
   on public.cifraclub_import_items ((true))
   where status = 'processing';
 
+do $$
+begin
+  if exists (
+    select 1
+    from pg_publication
+    where pubname = 'supabase_realtime'
+  ) then
+    if not exists (
+      select 1
+      from pg_publication_tables
+      where pubname = 'supabase_realtime'
+        and schemaname = 'public'
+        and tablename = 'cifraclub_import_jobs'
+    ) then
+      alter publication supabase_realtime add table public.cifraclub_import_jobs;
+    end if;
+
+    if not exists (
+      select 1
+      from pg_publication_tables
+      where pubname = 'supabase_realtime'
+        and schemaname = 'public'
+        and tablename = 'cifraclub_import_items'
+    ) then
+      alter publication supabase_realtime add table public.cifraclub_import_items;
+    end if;
+  end if;
+end;
+$$;
+
 alter table public.cifraclub_import_jobs enable row level security;
 alter table public.cifraclub_import_items enable row level security;
 

@@ -102,6 +102,14 @@ requirePattern(
   'a database-wide single processing item invariant'
 );
 requirePattern(
+  /if exists \(\s*select 1\s*from pg_publication\s*where pubname = 'supabase_realtime'\s*\)[\s\S]*if not exists \([\s\S]*from pg_publication_tables[\s\S]*tablename = 'cifraclub_import_jobs'[\s\S]*alter publication supabase_realtime add table public\.cifraclub_import_jobs;/s,
+  'an idempotent Realtime publication entry for import jobs'
+);
+requirePattern(
+  /if not exists \([\s\S]*from pg_publication_tables[\s\S]*tablename = 'cifraclub_import_items'[\s\S]*alter publication supabase_realtime add table public\.cifraclub_import_items;/s,
+  'an idempotent Realtime publication entry for import items'
+);
+requirePattern(
   /perform pg_advisory_xact_lock\(hashtext\('cifraclub_import_work_claim'\)\);/,
   'serialized concurrent claim attempts'
 );
