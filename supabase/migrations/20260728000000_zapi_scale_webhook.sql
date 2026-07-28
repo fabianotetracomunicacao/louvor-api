@@ -3,6 +3,9 @@
 -- Z-API "On receive" webhook with:
 -- https://www.louvorplay.com.br/api/zapi-webhook?secret=YOUR_SECRET
 
+alter table public.setlists
+add column if not exists service_time time;
+
 insert into public.app_settings (key, value, description)
 values (
   'zapi_webhook_secret',
@@ -180,6 +183,7 @@ begin
   select s.id,
          coalesce(s.title, s.name, 'Culto') as title,
          s.date,
+         s.service_time,
          s.created_by,
          coalesce(leader.whatsapp, leader.phone) as leader_phone,
          coalesce(musician.whatsapp, musician.phone) as musician_phone,
@@ -242,7 +246,11 @@ begin
       E'\n',
       '📌 ', coalesce(setlist_info.title, 'Culto'),
       case
-        when setlist_info.date is not null then E'\n📅 ' || to_char(setlist_info.date at time zone 'America/Sao_Paulo', 'DD/MM/YYYY HH24:MI')
+        when setlist_info.date is not null then E'\n📅 ' || to_char(setlist_info.date, 'DD/MM/YYYY') ||
+          case
+            when setlist_info.service_time is not null then ' às ' || to_char(setlist_info.service_time, 'HH24:MI')
+            else ''
+          end
         else ''
       end
     ),
@@ -254,7 +262,11 @@ begin
       E'\n\n',
       '📌 ', coalesce(setlist_info.title, 'Culto'),
       case
-        when setlist_info.date is not null then E'\n📅 ' || to_char(setlist_info.date at time zone 'America/Sao_Paulo', 'DD/MM/YYYY HH24:MI')
+        when setlist_info.date is not null then E'\n📅 ' || to_char(setlist_info.date, 'DD/MM/YYYY') ||
+          case
+            when setlist_info.service_time is not null then ' às ' || to_char(setlist_info.service_time, 'HH24:MI')
+            else ''
+          end
         else ''
       end,
       E'\n\n',

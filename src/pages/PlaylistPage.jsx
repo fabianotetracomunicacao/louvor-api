@@ -41,6 +41,24 @@ import {
 import { SetlistManager } from '../components/SetlistManager';
 import { Portal } from '../components/Portal';
 
+const parseLocalDate = (value) => {
+    if (!value) return null;
+    const raw = String(value);
+    const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    const date = match
+        ? new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]))
+        : new Date(raw);
+    return Number.isNaN(date.getTime()) ? null : date;
+};
+
+const formatSetlistDateTime = (dateValue, timeValue) => {
+    const date = parseLocalDate(dateValue);
+    if (!date) return 'Sem data definida';
+    const dateText = date.toLocaleDateString('pt-BR');
+    const timeMatch = timeValue ? String(timeValue).match(/^(\d{2}):(\d{2})/) : null;
+    return timeMatch ? `${dateText} às ${timeMatch[1]}:${timeMatch[2]}` : dateText;
+};
+
 
 
 export function PlaylistPage() {
@@ -1466,14 +1484,7 @@ export function PlaylistPage() {
                                     // 2. Future Dates Filter
                                     if (showFutureOnly && matches) {
                                         let setlistDate;
-                                        if (setlist.date && setlist.date.includes('T')) {
-                                            setlistDate = new Date(setlist.date);
-                                        } else if (setlist.date) {
-                                            const [y, m, d] = setlist.date.split('T')[0].split('-');
-                                            setlistDate = new Date(y, m - 1, d);
-                                        } else {
-                                            setlistDate = new Date();
-                                        }
+                                        setlistDate = parseLocalDate(setlist.date) || new Date();
                                         const today = new Date();
                                         setlistDate.setHours(0, 0, 0, 0);
                                         today.setHours(0, 0, 0, 0); // Reset time to compare dates only
@@ -1482,7 +1493,7 @@ export function PlaylistPage() {
                                     }
 
                                     return matches;
-                                }).sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0)).length === 0 ? (
+                                }).sort((a, b) => (parseLocalDate(b.date)?.getTime() || 0) - (parseLocalDate(a.date)?.getTime() || 0)).length === 0 ? (
                                     <div className="text-center py-10">
                                         <p className="text-slate-400 mb-2">Nenhum setlist encontrado.</p>
                                         {(showMyScalesOnly || showFutureOnly) && (
@@ -1504,21 +1515,14 @@ export function PlaylistPage() {
                                             }
                                             if (showFutureOnly && matches) {
                                                 let setlistDate;
-                                                if (setlist.date && setlist.date.includes('T')) {
-                                                    setlistDate = new Date(setlist.date);
-                                                } else if (setlist.date) {
-                                                    const [y, m, d] = setlist.date.split('T')[0].split('-');
-                                                    setlistDate = new Date(y, m - 1, d);
-                                                } else {
-                                                    setlistDate = new Date();
-                                                }
+                                                setlistDate = parseLocalDate(setlist.date) || new Date();
                                                 const today = new Date();
                                                 setlistDate.setHours(0, 0, 0, 0);
                                                 today.setHours(0, 0, 0, 0);
                                                 if (setlistDate < today) matches = false;
                                             }
                                             return matches;
-                                        }).sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0)).map(setlist => {
+                                        }).sort((a, b) => (parseLocalDate(b.date)?.getTime() || 0) - (parseLocalDate(a.date)?.getTime() || 0)).map(setlist => {
                                             // Frontend Permission Check
                                             const canEdit = (() => {
                                                 if (!user) return false;
@@ -1586,7 +1590,7 @@ export function PlaylistPage() {
 
                                                     {/* Date */}
                                                     <div className="text-[10px] text-slate-500 dark:text-slate-400 font-medium mt-1 mb-0 pl-0.5">
-                                                        Data do culto: {setlist.date ? new Date(setlist.date).toLocaleDateString('pt-BR', { timeZone: 'UTC' }) : 'Sem data definida'}
+                                                        Data do culto: {formatSetlistDateTime(setlist.date, setlist.service_time)}
                                                     </div>
 
                                                     <div className="text-sm text-slate-500 dark:text-slate-400 mt-2 mb-2">

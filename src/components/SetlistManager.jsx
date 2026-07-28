@@ -11,6 +11,25 @@ import { User, Calendar, Shield, Search, UserPlus, Users } from 'lucide-react';
 // Helper types for usage - INITIAL DEFAULT (will be updated from DB)
 const DEFAULT_USAGE_TYPES = ['Abertura', 'Louvor', 'Adoração', 'Oferta', 'Ceia', 'Palavra', 'Apelo', 'Encerramento'];
 
+const getDateInputValue = (value) => {
+    if (!value) return '';
+    const raw = String(value);
+    if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 10);
+    const date = new Date(raw);
+    if (Number.isNaN(date.getTime())) return '';
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+};
+
+const getTimeInputValue = (value) => {
+    if (!value) return '';
+    const raw = String(value);
+    const match = raw.match(/^(\d{2}):(\d{2})/);
+    return match ? `${match[1]}:${match[2]}` : '';
+};
+
 export function SetlistManager({ playlistId, songs, onClose, onSave, initialData }) {
 
     const [mode, setMode] = useState(initialData ? 'manual' : 'selection'); // Start in manual selection if editing
@@ -18,7 +37,8 @@ export function SetlistManager({ playlistId, songs, onClose, onSave, initialData
     const [description, setDescription] = useState(initialData?.description || '');
 
     // Scheduling & Permissions
-    const [scheduledDate, setScheduledDate] = useState(initialData?.date ? new Date(initialData.date).toISOString().split('T')[0] : '');
+    const [scheduledDate, setScheduledDate] = useState(getDateInputValue(initialData?.date));
+    const [scheduledTime, setScheduledTime] = useState(getTimeInputValue(initialData?.service_time || initialData?.serviceTime));
     const [isCollaborative, setIsCollaborative] = useState(initialData?.is_collaborative || false);
 
     // Scale (People)
@@ -212,7 +232,8 @@ export function SetlistManager({ playlistId, songs, onClose, onSave, initialData
                                 musicianName: user.name || user.full_name || user.email || 'Músico',
                                 roleName: role,
                                 setlistTitle: initialData?.name || initialData?.title || 'Culto',
-                                setlistDate: initialData?.date || scheduledDate
+                                setlistDate: initialData?.date || scheduledDate,
+                                setlistTime: initialData?.service_time || initialData?.serviceTime || scheduledTime
                             }).catch(err =>
                                 console.warn('[SetlistManager] WhatsApp notification failed (non-critical):', err)
                             );
@@ -297,6 +318,8 @@ export function SetlistManager({ playlistId, songs, onClose, onSave, initialData
             setMode('manual');
             setSetlistName(initialData.name || '');
             setDescription(initialData.description || ''); // Load description
+            setScheduledDate(getDateInputValue(initialData.date));
+            setScheduledTime(getTimeInputValue(initialData.service_time || initialData.serviceTime));
             setSelectedSongs(initialData.items.map(item => ({
                 id: item.song?.id,
                 title: item.song?.title,
@@ -311,6 +334,8 @@ export function SetlistManager({ playlistId, songs, onClose, onSave, initialData
             setMode('selection');
             setSetlistName('');
             setDescription('');
+            setScheduledDate('');
+            setScheduledTime('');
             setSelectedSongs([]);
             // Reset config to currently loaded usageTypes
             setAutoConfig(usageTypes.map(type => ({ type, count: 0 })));
@@ -416,6 +441,7 @@ export function SetlistManager({ playlistId, songs, onClose, onSave, initialData
             name: setlistName,
             description: description,
             scheduledDate: scheduledDate || null,
+            scheduledTime: scheduledTime || null,
             isCollaborative: isCollaborative,
             scaleMembers: scaleMembers.map(m => ({ userId: m.user.id, role: m.role })), // Pass simple array of IDs/Roles
             items: selectedSongs.map((s, i) => {
@@ -527,9 +553,9 @@ export function SetlistManager({ playlistId, songs, onClose, onSave, initialData
                             </div>
 
                             {/* Scheduling & Permissions Section */}
-                            <div className="flex flex-col md:flex-row gap-4 mb-6">
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
                                 {/* Date Picker */}
-                                <div className="flex-1">
+                                <div>
                                     <label className="block text-sm font-bold text-slate-500 mb-1 flex items-center gap-1">
                                         <Calendar size={14} /> Data Prevista
                                     </label>
@@ -541,8 +567,21 @@ export function SetlistManager({ playlistId, songs, onClose, onSave, initialData
                                     />
                                 </div>
 
+                                {/* Time Picker */}
+                                <div>
+                                    <label className="block text-sm font-bold text-slate-500 mb-1 flex items-center gap-1">
+                                        <Clock size={14} /> Horário
+                                    </label>
+                                    <input
+                                        type="time"
+                                        className="w-full bg-slate-100 dark:bg-slate-800 rounded-lg p-3 text-slate-700 dark:text-slate-200 outline-none focus:ring-2 focus:ring-purple-500"
+                                        value={scheduledTime}
+                                        onChange={e => setScheduledTime(e.target.value)}
+                                    />
+                                </div>
+
                                 {/* Permissions */}
-                                <div className="flex-1">
+                                <div>
                                     <label className="block text-sm font-bold text-slate-500 mb-1 flex items-center gap-1">
                                         <Shield size={14} /> Permissões
                                     </label>

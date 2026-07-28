@@ -31,17 +31,30 @@ export function SchedulesPage() {
         loadSchedules();
     }, []);
 
-    const formatDate = (dateStr) => {
-        if (!dateStr) return 'Data não definida';
-        const d = new Date(dateStr);
-        return d.toLocaleDateString('pt-BR', { timeZone: 'UTC' });
+    const parseLocalDate = (dateStr) => {
+        if (!dateStr) return null;
+        const raw = String(dateStr);
+        const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+        const d = match
+            ? new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]))
+            : new Date(raw);
+        return Number.isNaN(d.getTime()) ? null : d;
+    };
+
+    const formatDate = (dateStr, timeStr) => {
+        const d = parseLocalDate(dateStr);
+        if (!d) return 'Data não definida';
+        const dateText = d.toLocaleDateString('pt-BR');
+        const timeMatch = timeStr ? String(timeStr).match(/^(\d{2}):(\d{2})/) : null;
+        return timeMatch ? `${dateText} às ${timeMatch[1]}:${timeMatch[2]}` : dateText;
     };
 
     const isFuture = (dateStr) => {
         if (!dateStr) return true;
         const today = new Date();
         today.setHours(0, 0, 0, 0);
-        const d = new Date(dateStr);
+        const d = parseLocalDate(dateStr);
+        if (!d) return true;
         return d >= today;
     };
 
@@ -197,7 +210,7 @@ export function SchedulesPage() {
                         <div className="flex flex-wrap gap-x-4 gap-y-1 mt-1.5">
                             <div className="flex items-center gap-1 text-xs text-slate-500">
                                 <Clock size={14} />
-                                {formatDate(item.setlist.date)}
+                                {formatDate(item.setlist.date, item.setlist.service_time)}
                             </div>
                             <div className="flex items-start gap-1 text-xs text-slate-500">
                                 <User size={14} className="mt-0.5" />

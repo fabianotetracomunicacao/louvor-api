@@ -16,6 +16,37 @@ export const normalizePhone = (phone) => {
     return digits;
 };
 
+const parseLocalDate = (value) => {
+    if (!value) return null;
+    const raw = String(value);
+    const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (match) {
+        return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+    }
+    const date = new Date(raw);
+    return Number.isNaN(date.getTime()) ? null : date;
+};
+
+const normalizeDisplayTime = (value) => {
+    if (!value) return '';
+    const match = String(value).match(/^(\d{2}):(\d{2})/);
+    return match ? `${match[1]}:${match[2]}` : '';
+};
+
+const formatSetlistDateTime = (setlistDate, setlistTime, options = {}) => {
+    const date = parseLocalDate(setlistDate);
+    if (!date) return 'data do culto';
+
+    const formattedDate = date.toLocaleDateString('pt-BR', {
+        weekday: options.weekday || 'long',
+        day: '2-digit',
+        month: '2-digit'
+    });
+    const time = normalizeDisplayTime(setlistTime);
+
+    return time ? `${formattedDate} às ${time}` : formattedDate;
+};
+
 export const WhatsAppService = {
     /**
      * Obter as credenciais da Z-API no banco de dados (app_settings)
@@ -159,13 +190,13 @@ export const WhatsAppService = {
     /**
      * Enviar WhatsApp automático de confirmação para o Músico Escalado
      */
-    async sendScaleConfirmation({ scaleId, musicianPhone, musicianName, roleName, setlistTitle, setlistDate }) {
+    async sendScaleConfirmation({ scaleId, musicianPhone, musicianName, roleName, setlistTitle, setlistDate, setlistTime }) {
         if (!musicianPhone) {
             console.warn('[WhatsAppService] Músico sem telefone cadastrado.');
             return { success: false, error: 'Músico sem telefone' };
         }
 
-        const dateFormatted = setlistDate ? new Date(setlistDate).toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : 'data do culto';
+        const dateFormatted = formatSetlistDateTime(setlistDate, setlistTime);
 
         const message = [
             `🎵 *LouvorPlay - Confirmação de Escala*`,
@@ -215,10 +246,10 @@ export const WhatsAppService = {
     /**
      * Enviar Alerta via WhatsApp para o Líder do Louvor quando um Músico Recusa
      */
-    async sendLeaderAlert({ leaderPhone, musicianName, roleName, setlistTitle, setlistDate }) {
+    async sendLeaderAlert({ leaderPhone, musicianName, roleName, setlistTitle, setlistDate, setlistTime }) {
         if (!leaderPhone) return;
 
-        const dateFormatted = setlistDate ? new Date(setlistDate).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '';
+        const dateFormatted = setlistDate ? formatSetlistDateTime(setlistDate, setlistTime, { weekday: 'short' }) : '';
 
         const message = [
             `⚠️ *LouvorPlay - Alerta de Escala*`,
@@ -270,15 +301,29 @@ export const WhatsAppService = {
         // 2. If declined, independently fetch details and notify leader
         if (isDeclined && scaleData.setlist_id) {
             try {
-                const [{ data: musicianProfile }, { data: setlistData }] = await Promise.all([
+                const setlistWithTime = await supabase
+                    .from('setlists')
+                    .select('name, title, date, service_time, created_by')
+                    .eq('id', scaleData.setlist_id)
+                    .maybeSingle();
+                const setlistFallback = setlistWithTime.error
+                    ? await supabase
+                        .from('setlists')
+                        .select('name, title, date, created_by')
+                        .eq('id', scaleData.setlist_id)
+                        .maybeSingle()
+                    : setlistWithTime;
+
+                const [{ data: musicianProfile }] = await Promise.all([
                     supabase.from('profiles').select('name, full_name').eq('id', scaleData.user_id).maybeSingle(),
-                    supabase.from('setlists').select('name, title, date, created_by').eq('id', scaleData.setlist_id).maybeSingle()
                 ]);
+                const setlistData = setlistFallback.data;
 
                 const musicianName = musicianProfile?.name || musicianProfile?.full_name || 'Músico';
                 const roleName = scaleData.role || 'Escala';
                 const setlistTitle = setlistData?.title || setlistData?.name || 'Culto';
                 const setlistDate = setlistData?.date;
+                const setlistTime = setlistData?.service_time;
                 const leaderId = setlistData?.created_by;
 
                 let leaderPhone = null;
@@ -305,7 +350,8 @@ export const WhatsAppService = {
                         musicianName,
                         roleName,
                         setlistTitle,
-                        setlistDate
+                        setlistDate,
+                        setlistTime
                     }).catch(err => console.warn('[WhatsAppService] Alert error:', err));
                 }
             } catch (e) {

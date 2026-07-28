@@ -1140,19 +1140,10 @@ export async function addUserToSetlistScale(setlistId, userId, role = null) {
     }
 
     // 2. Fetch Setlist Details for Notification
-    const { data: setlist } = await supabase
-        .from('setlists')
-        .select('name, title, date, playlist_id')
-        .eq('id', setlistId)
-        .single();
+    const { data: setlist } = await fetchSetlistForNotification(setlistId);
 
     if (setlist) {
-        let dateStr = 'Data não informada';
-        const dVal = setlist.date;
-        if (dVal) {
-            const d = new Date(dVal);
-            dateStr = d.toLocaleDateString('pt-BR', { timeZone: 'UTC' });
-        }
+        const dateStr = formatSetlistSchedule(setlist.date, setlist.service_time);
 
         const setlistTitle = setlist.title || setlist.name || 'Setlist';
         const message = `Você foi escalado para o culto "${setlistTitle}" no dia ${dateStr}${role ? ` como: ${role}` : ''}.`;
@@ -1179,7 +1170,8 @@ export async function addUserToSetlistScale(setlistId, userId, role = null) {
                     musicianName,
                     roleName: role,
                     setlistTitle,
-                    setlistDate: setlist.date
+                    setlistDate: setlist.date,
+                    setlistTime: setlist.service_time
                 }).catch(err => console.warn('[WhatsApp AutoSend] Error:', err));
             }
         } catch (e) {
@@ -1225,6 +1217,7 @@ export async function getMySchedules() {
                 id,
                 name,
                 date,
+                service_time,
                 playlist_id,
                 items: setlist_items (
                     id,
@@ -1255,17 +1248,46 @@ export async function getMySchedules() {
                     id,
                     name,
                     date,
+                    service_time,
                     playlist_id
                 )
             `)
             .eq('user_id', user.id)
             .order('created_at', { ascending: false });
 
-        if (fallback.error) {
-            console.error("Error fetching schedules (fallback):", fallback.error);
-            throw fallback.error;
+        if (isMissingColumnError(fallback.error, 'service_time')) {
+            const legacyFallback = await supabase
+                .from('setlist_scales')
+                .select(`
+                id,
+                role,
+                status,
+                whatsapp_status,
+                confirmed_at,
+                declined_at,
+                decline_reason,
+                created_at,
+                setlist: setlists (
+                    id,
+                    name,
+                    date,
+                    playlist_id
+                )
+            `)
+                .eq('user_id', user.id)
+                .order('created_at', { ascending: false });
+
+            data = legacyFallback.data;
+            error = legacyFallback.error;
+        } else {
+            data = fallback.data;
+            error = fallback.error;
         }
-        data = fallback.data;
+
+        if (error) {
+            console.error("Error fetching schedules (fallback):", error);
+            throw error;
+        }
     }
 
     if (data) {
@@ -2622,20 +2644,93 @@ export async function getSongsByFunction(funcName) {
 
 // --- SETLISTS ---
 
-export async function createSetlist(setlistData) {
-    // 1. Create Setlist header
-    const { data: setlist, error } = await supabase
+const isMissingColumnError = (error, columnName) => (
+    error?.code === '42703'
+    || error?.code === 'PGRST204'
+    || String(error?.message || '').includes(columnName)
+);
+
+const getTodayDateString = () => {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+};
+
+const getSetlistDateValue = (setlistData) => (
+    setlistData.date || setlistData.scheduledDate || getTodayDateString()
+);
+
+const normalizeServiceTime = (time) => {
+    if (!time) return null;
+    const match = String(time).match(/^(\d{2}):(\d{2})/);
+    return match ? `${match[1]}:${match[2]}` : null;
+};
+
+const formatLocalDate = (value) => {
+    if (!value) return 'Data não informada';
+    const raw = String(value);
+    const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    const date = match
+        ? new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]))
+        : new Date(raw);
+    if (Number.isNaN(date.getTime())) return 'Data não informada';
+    return date.toLocaleDateString('pt-BR');
+};
+
+const formatSetlistSchedule = (date, time) => {
+    const dateText = formatLocalDate(date);
+    const timeText = normalizeServiceTime(time);
+    return timeText ? `${dateText} às ${timeText}` : dateText;
+};
+
+async function fetchSetlistForNotification(setlistId) {
+    const withTime = await supabase
         .from('setlists')
-        .insert({
-            playlist_id: setlistData.playlistId,
-            name: setlistData.name,
-            description: setlistData.description,
-            date: setlistData.date || setlistData.scheduledDate || new Date(),
-            is_collaborative: setlistData.isCollaborative || false,
-            created_by: (await supabase.auth.getUser()).data.user?.id
-        })
+        .select('name, title, date, service_time, playlist_id')
+        .eq('id', setlistId)
+        .single();
+
+    if (!withTime.error) return withTime;
+    if (!isMissingColumnError(withTime.error, 'service_time')) return withTime;
+
+    return await supabase
+        .from('setlists')
+        .select('name, title, date, playlist_id')
+        .eq('id', setlistId)
+        .single();
+}
+
+export async function createSetlist(setlistData) {
+    const payload = {
+        playlist_id: setlistData.playlistId,
+        name: setlistData.name,
+        description: setlistData.description,
+        date: getSetlistDateValue(setlistData),
+        service_time: normalizeServiceTime(setlistData.serviceTime || setlistData.scheduledTime),
+        is_collaborative: setlistData.isCollaborative || false,
+        created_by: (await supabase.auth.getUser()).data.user?.id
+    };
+
+    // 1. Create Setlist header
+    let { data: setlist, error } = await supabase
+        .from('setlists')
+        .insert(payload)
         .select()
         .single();
+
+    if (isMissingColumnError(error, 'service_time')) {
+        const fallbackPayload = { ...payload };
+        delete fallbackPayload.service_time;
+        const fallback = await supabase
+            .from('setlists')
+            .insert(fallbackPayload)
+            .select()
+            .single();
+        setlist = fallback.data;
+        error = fallback.error;
+    }
 
     if (error) throw error;
 
@@ -2828,16 +2923,29 @@ export async function updatePlaylistSettings(playlistId, settings) {
 }
 
 export async function updateSetlist(setlistId, setlistData) {
+    const headerPayload = {
+        name: setlistData.name,
+        description: setlistData.description,
+        date: getSetlistDateValue(setlistData),
+        service_time: normalizeServiceTime(setlistData.serviceTime || setlistData.scheduledTime),
+        is_collaborative: setlistData.isCollaborative
+    };
+
     // 1. Update Header
-    const { error: headerError } = await supabase
+    let { error: headerError } = await supabase
         .from('setlists')
-        .update({
-            name: setlistData.name,
-            description: setlistData.description,
-            date: setlistData.date || setlistData.scheduledDate, // Update date if provided
-            is_collaborative: setlistData.isCollaborative // Update collaboration status
-        })
+        .update(headerPayload)
         .eq('id', setlistId);
+
+    if (isMissingColumnError(headerError, 'service_time')) {
+        const fallbackPayload = { ...headerPayload };
+        delete fallbackPayload.service_time;
+        const fallback = await supabase
+            .from('setlists')
+            .update(fallbackPayload)
+            .eq('id', setlistId);
+        headerError = fallback.error;
+    }
 
     if (headerError) throw headerError;
 
