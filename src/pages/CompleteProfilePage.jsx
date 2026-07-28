@@ -90,7 +90,6 @@ export function CompleteProfilePage() {
             const { error: profileError } = await supabase
                 .from('profiles')
                 .update({
-                    phone_number: normalizedPhone,
                     phone: normalizedPhone,
                     whatsapp: normalizedPhone,
                     instrument: instrument

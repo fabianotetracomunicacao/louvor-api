@@ -4,6 +4,52 @@ import { supabase } from '../supabaseClient';
 import { getInstruments } from '../utils/storage';
 import { normalizePhone } from '../services/WhatsAppService';
 
+// ─── Sub-components defined OUTSIDE the parent so React never recreates their
+// identity on each render — which was the root cause of the focus-loss bug.
+
+const inputClass = (hasIcon = true) =>
+    `w-full ${hasIcon ? 'pl-9' : 'pl-3'} pr-4 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 transition placeholder:text-slate-600`;
+
+function InputField({ label, icon: Icon, children }) {
+    return (
+        <div className="space-y-1.5">
+            <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider">
+                {label}
+            </label>
+            <div className="relative">
+                {Icon && <Icon className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" size={16} />}
+                {children}
+            </div>
+        </div>
+    );
+}
+
+function SectionToggle({ id, label, icon: Icon, activeSection, setActiveSection, children }) {
+    const isOpen = activeSection === id;
+    return (
+        <div className="border border-slate-700 rounded-xl overflow-hidden">
+            <button
+                type="button"
+                onClick={() => setActiveSection(isOpen ? null : id)}
+                className="w-full flex items-center justify-between px-4 py-3 bg-slate-900/60 hover:bg-slate-900/80 text-left transition"
+            >
+                <span className="flex items-center gap-2 text-sm font-bold text-slate-200">
+                    <Icon size={16} className="text-purple-400 shrink-0" />
+                    {label}
+                </span>
+                {isOpen ? <ChevronUp size={16} className="text-slate-400" /> : <ChevronDown size={16} className="text-slate-400" />}
+            </button>
+            {isOpen && (
+                <div className="p-4 space-y-4 bg-slate-900/30 border-t border-slate-700">
+                    {children}
+                </div>
+            )}
+        </div>
+    );
+}
+
+// ─── Main Modal ───────────────────────────────────────────────────────────────
+
 export function UserEditModal({ user, onClose, onUserUpdated }) {
     const [formData, setFormData] = useState({
         name: user.name || user.full_name || '',
@@ -11,7 +57,7 @@ export function UserEditModal({ user, onClose, onUserUpdated }) {
         role: user.role || 'WORSHIPPER',
         instrument: user.instrument || '',
         active_church_id: user.active_church_id || '',
-        phone: user.whatsapp || user.phone || user.phone_number || '',
+        phone: user.whatsapp || user.phone || '',
     });
     const [selectedInstruments, setSelectedInstruments] = useState(user.available_instruments || []);
     const [instrumentsMetadata, setInstrumentsMetadata] = useState([]);
@@ -20,43 +66,38 @@ export function UserEditModal({ user, onClose, onUserUpdated }) {
     const [showPassword, setShowPassword] = useState(false);
     const [loading, setLoading] = useState(false);
     const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
-    const [activeSection, setActiveSection] = useState('profile'); // 'profile' | 'instruments' | 'security'
+    const [activeSection, setActiveSection] = useState('profile');
 
-    // Phone normalization preview
+    // Phone normalization preview — computed values only, no state changes
     const phoneNormalized = formData.phone ? normalizePhone(formData.phone) : null;
     const phoneIsValid = phoneNormalized && phoneNormalized.length >= 12;
     const phoneWarning = formData.phone && !phoneIsValid;
 
     useEffect(() => {
+        const loadMetadata = async () => {
+            const metadata = await getInstruments();
+            setInstrumentsMetadata(metadata);
+        };
+        const loadChurches = async () => {
+            const { data } = await supabase.from('churches').select('id, name').eq('status', 'active');
+            if (data) setChurches(data);
+        };
         loadMetadata();
         loadChurches();
     }, []);
 
-    const loadChurches = async () => {
-        const { data } = await supabase.from('churches').select('id, name').eq('status', 'active');
-        if (data) setChurches(data);
-    };
-
-    const loadMetadata = async () => {
-        const metadata = await getInstruments();
-        setInstrumentsMetadata(metadata);
-    };
-
     const toggleInstrument = (name) => {
-        if (selectedInstruments.includes(name)) {
-            setSelectedInstruments(selectedInstruments.filter(i => i !== name));
-        } else {
-            setSelectedInstruments([...selectedInstruments, name]);
-        }
+        setSelectedInstruments(prev =>
+            prev.includes(name) ? prev.filter(i => i !== name) : [...prev, name]
+        );
     };
 
     const handleUpdateUser = async () => {
         setLoading(true);
         try {
-            // Normalize the phone before saving
+            // Normalize the phone before saving — only to columns that exist
             const savedPhone = formData.phone ? normalizePhone(formData.phone) : null;
 
-            // 1. Update profile
             const { error: profileError } = await supabase
                 .from('profiles')
                 .update({
@@ -67,14 +108,13 @@ export function UserEditModal({ user, onClose, onUserUpdated }) {
                     available_instruments: selectedInstruments,
                     active_church_id: formData.active_church_id || null,
                     phone: savedPhone || null,
-                    phone_number: savedPhone || null,
                     whatsapp: savedPhone || null,
                 })
                 .eq('id', user.id);
 
             if (profileError) throw profileError;
 
-            // 2. Update Church Membership
+            // Church membership
             if (formData.active_church_id && formData.role !== 'super_admin') {
                 let churchRole = 'WORSHIPPER';
                 if (formData.role === 'CHURCH_ADMIN') churchRole = 'CHURCH_ADMIN';
@@ -82,30 +122,23 @@ export function UserEditModal({ user, onClose, onUserUpdated }) {
 
                 const { data: existing } = await supabase
                     .from('church_user_memberships')
-                    .select('id, church_id')
+                    .select('id')
                     .eq('user_id', user.id)
                     .maybeSingle();
 
                 if (existing) {
-                    const { error: memError } = await supabase
+                    await supabase
                         .from('church_user_memberships')
                         .update({ church_id: formData.active_church_id, role: churchRole })
                         .eq('id', existing.id);
-                    if (memError) console.error('Error updating membership:', memError);
                 } else {
-                    const { error: memError } = await supabase
+                    await supabase
                         .from('church_user_memberships')
-                        .insert({
-                            user_id: user.id,
-                            church_id: formData.active_church_id,
-                            role: churchRole,
-                            status: 'active'
-                        });
-                    if (memError) console.error('Error creating membership:', memError);
+                        .insert({ user_id: user.id, church_id: formData.active_church_id, role: churchRole, status: 'active' });
                 }
             }
 
-            // 3. Update password if provided
+            // Password
             if (newPassword.trim()) {
                 const { error: passwordError } = await supabase.rpc('update_user_password_by_admin', {
                     target_user_id: user.id,
@@ -131,9 +164,7 @@ export function UserEditModal({ user, onClose, onUserUpdated }) {
                 target_user_id: user.id,
                 successor_id: null
             });
-
             if (error) throw error;
-
             onUserUpdated();
             onClose();
         } catch (error) {
@@ -144,45 +175,7 @@ export function UserEditModal({ user, onClose, onUserUpdated }) {
         }
     };
 
-    const SectionToggle = ({ id, label, icon: Icon, children }) => {
-        const isOpen = activeSection === id;
-        return (
-            <div className="border border-slate-700 rounded-xl overflow-hidden">
-                <button
-                    type="button"
-                    onClick={() => setActiveSection(isOpen ? null : id)}
-                    className="w-full flex items-center justify-between px-4 py-3 bg-slate-900/60 hover:bg-slate-900/80 text-left transition"
-                >
-                    <span className="flex items-center gap-2 text-sm font-bold text-slate-200">
-                        <Icon size={16} className="text-purple-400 shrink-0" />
-                        {label}
-                    </span>
-                    {isOpen ? <ChevronUp size={16} className="text-slate-400" /> : <ChevronDown size={16} className="text-slate-400" />}
-                </button>
-                {isOpen && (
-                    <div className="p-4 space-y-4 bg-slate-900/30 border-t border-slate-700">
-                        {children}
-                    </div>
-                )}
-            </div>
-        );
-    };
-
-    const InputField = ({ label, icon: Icon, note, children }) => (
-        <div className="space-y-1.5">
-            <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider">
-                {label}
-            </label>
-            <div className="relative">
-                {Icon && <Icon className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" size={16} />}
-                {children}
-            </div>
-            {note && <p className="text-[10px] text-slate-500 italic pl-1">{note}</p>}
-        </div>
-    );
-
-    const inputClass = (hasIcon = true) =>
-        `w-full ${hasIcon ? 'pl-9' : 'pl-3'} pr-4 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 transition placeholder:text-slate-600`;
+    const sectionProps = { activeSection, setActiveSection };
 
     return (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
@@ -205,14 +198,14 @@ export function UserEditModal({ user, onClose, onUserUpdated }) {
                 {/* Scrollable Content */}
                 <div className="flex-1 overflow-y-auto p-5 space-y-3">
 
-                    {/* === PROFILE SECTION === */}
-                    <SectionToggle id="profile" label="Dados do Perfil" icon={User}>
+                    {/* PROFILE SECTION */}
+                    <SectionToggle id="profile" label="Dados do Perfil" icon={User} {...sectionProps}>
 
                         <InputField label="Nome Completo" icon={User}>
                             <input
                                 type="text"
                                 value={formData.name}
-                                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                                onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
                                 className={inputClass()}
                                 placeholder="Nome do usuário"
                             />
@@ -227,7 +220,7 @@ export function UserEditModal({ user, onClose, onUserUpdated }) {
                             />
                         </InputField>
 
-                        {/* WhatsApp / Phone Field */}
+                        {/* WhatsApp / Phone */}
                         <div className="space-y-1.5">
                             <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2">
                                 <MessageCircle size={13} className="text-emerald-400" />
@@ -238,13 +231,13 @@ export function UserEditModal({ user, onClose, onUserUpdated }) {
                                 <input
                                     type="tel"
                                     value={formData.phone}
-                                    onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
+                                    onChange={(e) => setFormData(prev => ({ ...prev, phone: e.target.value }))}
                                     placeholder="(11) 90000-0000"
                                     className={`${inputClass()} ${phoneWarning ? 'border-amber-600 focus:ring-amber-500' : phoneIsValid ? 'border-emerald-700 focus:ring-emerald-500' : ''}`}
                                 />
                             </div>
-                            {/* Fixed-height feedback row — always rendered, visibility toggled to avoid layout shift */}
-                            <div className={`flex items-center gap-1.5 text-[11px] px-2 py-1 rounded-lg border transition-all duration-150 ${
+                            {/* Always-rendered feedback — no conditional mount/unmount = no layout shift = no focus loss */}
+                            <div className={`flex items-center gap-1.5 text-[11px] px-2 py-1 rounded-lg border transition-colors duration-150 ${
                                 !formData.phone
                                     ? 'bg-transparent border-transparent text-slate-500'
                                     : phoneIsValid
@@ -254,9 +247,9 @@ export function UserEditModal({ user, onClose, onUserUpdated }) {
                                 {!formData.phone ? (
                                     <><Info size={10} className="shrink-0" /><span className="italic">Sem WhatsApp → notificações de escala serão ignoradas</span></>
                                 ) : phoneIsValid ? (
-                                    <><Check size={12} className="shrink-0" /><span>Número para WhatsApp: <strong className="font-mono">+{phoneNormalized}</strong></span></>
+                                    <><Check size={12} className="shrink-0" /><span>WhatsApp: <strong className="font-mono">+{phoneNormalized}</strong></span></>
                                 ) : (
-                                    <><AlertCircle size={12} className="shrink-0" /><span>Número inválido — verifique DDD + 9 dígitos (Brasil)</span></>
+                                    <><AlertCircle size={12} className="shrink-0" /><span>Número inválido — verifique DDD + 9 dígitos</span></>
                                 )}
                             </div>
                         </div>
@@ -265,7 +258,7 @@ export function UserEditModal({ user, onClose, onUserUpdated }) {
                             <select
                                 disabled={formData.role === 'super_admin'}
                                 value={formData.active_church_id}
-                                onChange={(e) => setFormData({ ...formData, active_church_id: e.target.value })}
+                                onChange={(e) => setFormData(prev => ({ ...prev, active_church_id: e.target.value }))}
                                 className={`${inputClass()} appearance-none disabled:opacity-50`}
                             >
                                 <option value="">Nenhuma / Usuário Individual</option>
@@ -297,15 +290,15 @@ export function UserEditModal({ user, onClose, onUserUpdated }) {
 
                     </SectionToggle>
 
-                    {/* === INSTRUMENTS SECTION === */}
-                    <SectionToggle id="instruments" label="Instrumentos e Habilidades" icon={Music}>
+                    {/* INSTRUMENTS SECTION */}
+                    <SectionToggle id="instruments" label="Instrumentos e Habilidades" icon={Music} {...sectionProps}>
 
                         <InputField label="Instrumento Principal" icon={Music}>
                             <select
                                 value={formData.instrument}
                                 onChange={(e) => {
                                     const val = e.target.value;
-                                    setFormData({ ...formData, instrument: val });
+                                    setFormData(prev => ({ ...prev, instrument: val }));
                                     if (val && !selectedInstruments.includes(val)) {
                                         setSelectedInstruments(prev => [...prev, val]);
                                     }
@@ -353,8 +346,8 @@ export function UserEditModal({ user, onClose, onUserUpdated }) {
 
                     </SectionToggle>
 
-                    {/* === SECURITY SECTION === */}
-                    <SectionToggle id="security" label="Segurança" icon={Lock}>
+                    {/* SECURITY SECTION */}
+                    <SectionToggle id="security" label="Segurança" icon={Lock} {...sectionProps}>
                         <div className="space-y-1.5">
                             <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider">
                                 Nova Senha
@@ -370,14 +363,14 @@ export function UserEditModal({ user, onClose, onUserUpdated }) {
                                 />
                                 <button
                                     type="button"
-                                    onClick={() => setShowPassword(!showPassword)}
+                                    onClick={() => setShowPassword(v => !v)}
                                     className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 transition"
                                 >
                                     {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
                                 </button>
                             </div>
                             <p className="text-[10px] text-slate-500 italic">
-                                Mínimo 6 caracteres. Deixe em branco para não alterar a senha atual.
+                                Mínimo 6 caracteres. Deixe em branco para não alterar.
                             </p>
                         </div>
                     </SectionToggle>
