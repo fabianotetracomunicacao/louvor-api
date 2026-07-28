@@ -1215,6 +1215,11 @@ export async function getMySchedules() {
         .select(`
             id,
             role,
+            status,
+            whatsapp_status,
+            confirmed_at,
+            declined_at,
+            decline_reason,
             created_at,
             setlist: setlists (
                 id,
@@ -1240,6 +1245,11 @@ export async function getMySchedules() {
             .select(`
                 id,
                 role,
+                status,
+                whatsapp_status,
+                confirmed_at,
+                declined_at,
+                decline_reason,
                 created_at,
                 setlist: setlists (
                     id,
