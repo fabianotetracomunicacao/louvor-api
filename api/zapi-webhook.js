@@ -56,9 +56,9 @@ async function getZApiConfig(supabase) {
   };
 }
 
-async function sendLeaderSummary(supabase, leaderPhone, message) {
+async function sendTextMessage(supabase, targetPhone, message) {
   const config = await getZApiConfig(supabase);
-  const phone = normalizePhone(leaderPhone);
+  const phone = normalizePhone(targetPhone);
 
   if (!config.instanceId || !config.instanceToken || !phone || !message) {
     return { skipped: true };
@@ -126,17 +126,28 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: 'webhook_processing_failed' });
   }
 
-  if (data?.success && data?.leaderPhone && data?.leaderMessage) {
-    try {
-      const leaderNotification = await sendLeaderSummary(supabase, data.leaderPhone, data.leaderMessage);
-      return res.status(200).json({ ...data, leaderNotification });
-    } catch (notificationError) {
-      console.error('[zapi-webhook] Leader notification error:', notificationError);
-      return res.status(200).json({
-        ...data,
-        leaderNotification: { success: false, error: 'leader_notification_failed' },
-      });
+  if (data?.success) {
+    const responsePayload = { ...data };
+
+    if (data?.leaderPhone && data?.leaderMessage) {
+      try {
+        responsePayload.leaderNotification = await sendTextMessage(supabase, data.leaderPhone, data.leaderMessage);
+      } catch (notificationError) {
+        console.error('[zapi-webhook] Leader notification error:', notificationError);
+        responsePayload.leaderNotification = { success: false, error: 'leader_notification_failed' };
+      }
     }
+
+    if (data?.musicianPhone && data?.musicianMessage) {
+      try {
+        responsePayload.musicianNotification = await sendTextMessage(supabase, data.musicianPhone, data.musicianMessage);
+      } catch (notificationError) {
+        console.error('[zapi-webhook] Musician notification error:', notificationError);
+        responsePayload.musicianNotification = { success: false, error: 'musician_notification_failed' };
+      }
+    }
+
+    return res.status(200).json(responsePayload);
   }
 
   return res.status(200).json(data);

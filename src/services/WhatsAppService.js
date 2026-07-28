@@ -170,7 +170,7 @@ export const WhatsAppService = {
         const message = [
             `🎵 *LouvorPlay - Confirmação de Escala*`,
             ``,
-            `Olá, *${musicianName}*! Você foi escalado(a) no louvor para o culto:`,
+            `Olá, *${musicianName}*! Você foi escalado para:`,
             `📌 *${setlistTitle || 'Culto'}*`,
             `📅 *${dateFormatted}*`,
             `🎸 *Sua função:* ${roleName || 'Músico(a)'}`,

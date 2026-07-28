@@ -66,6 +66,8 @@ declare
   target_scale record;
   setlist_info record;
   leader_phone text;
+  musician_phone text;
+  musician_name text;
   summary_lines text;
   summary_totals record;
   now_value timestamptz := now();
@@ -179,13 +181,17 @@ begin
          coalesce(s.title, s.name, 'Culto') as title,
          s.date,
          s.created_by,
-         coalesce(leader.whatsapp, leader.phone) as leader_phone
+         coalesce(leader.whatsapp, leader.phone) as leader_phone,
+         coalesce(musician.whatsapp, musician.phone) as musician_phone,
+         coalesce(musician.name, musician.full_name, musician.email, 'Músico') as musician_name
     into setlist_info
   from public.setlists s
   left join public.profiles leader on leader.id = s.created_by
+  left join public.profiles musician on musician.id = target_scale.user_id
   where s.id = target_scale.setlist_id;
 
   leader_phone := setlist_info.leader_phone;
+  musician_phone := setlist_info.musician_phone;
 
   select string_agg(
            case coalesce(ss.status, 'PENDING')
@@ -220,6 +226,26 @@ begin
     'scaleId', target_scale.id,
     'status', response_status,
     'leaderPhone', leader_phone,
+    'musicianPhone', musician_phone,
+    'musicianMessage', concat(
+      case response_status
+        when 'CONFIRMED' then '✅ Presença confirmada!'
+        else '❌ Resposta registrada.'
+      end,
+      E'\n\n',
+      case response_status
+        when 'CONFIRMED' then 'Obrigado, '
+        else 'Obrigado pelo retorno, '
+      end,
+      coalesce(setlist_info.musician_name, 'músico'),
+      '.',
+      E'\n',
+      '📌 ', coalesce(setlist_info.title, 'Culto'),
+      case
+        when setlist_info.date is not null then E'\n📅 ' || to_char(setlist_info.date at time zone 'America/Sao_Paulo', 'DD/MM/YYYY HH24:MI')
+        else ''
+      end
+    ),
     'leaderMessage', concat(
       case response_status
         when 'CONFIRMED' then '✅ Confirmação recebida'
