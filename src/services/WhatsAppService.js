@@ -185,57 +185,67 @@ export const WhatsAppService = {
             if (declineReason) updatePayload.decline_reason = declineReason;
         }
 
-        // 1. Atualiza no banco
-        const { data: scaleData, error: updateError } = await supabase
+        // 1. Update setlist_scales row cleanly without fragile nested relation joins
+        const { data: updatedRows, error: updateError } = await supabase
             .from('setlist_scales')
             .update(updatePayload)
             .eq('id', scaleId)
-            .select(`
-                id,
-                role,
-                user:profiles(id, name, full_name, phone, whatsapp),
-                setlist:setlists(
-                    id,
-                    title,
-                    date,
-                    created_by,
-                    creator:profiles!setlists_created_by_profile_fkey(id, name, phone, whatsapp)
-                )
-            `)
-            .single();
+            .select('id, setlist_id, user_id, role, status, confirmed_at, declined_at, decline_reason');
 
         if (updateError) {
             console.error('[WhatsAppService] Erro ao atualizar escala:', updateError);
             throw updateError;
         }
 
-        // 2. Se recusado, notifica o líder no app (notifications) e no WhatsApp
-        if (isDeclined && scaleData) {
-            const musicianName = scaleData.user?.name || scaleData.user?.full_name || 'Músico';
-            const roleName = scaleData.role || 'Escala';
-            const setlistTitle = scaleData.setlist?.title || 'Culto';
-            const setlistDate = scaleData.setlist?.date;
-            const leaderId = scaleData.setlist?.created_by;
-            const leaderPhone = scaleData.setlist?.creator?.whatsapp || scaleData.setlist?.creator?.phone;
+        let scaleData = updatedRows && updatedRows.length > 0 ? updatedRows[0] : null;
 
-            if (leaderId) {
-                await supabase.from('notifications').insert({
-                    user_id: leaderId,
-                    title: '⚠️ Músico Recusou a Escala',
-                    message: `${musicianName} (${roleName}) informou que não poderá participar no culto "${setlistTitle}".`,
-                    type: 'WARNING',
-                    is_read: false
-                }).catch(e => console.error('Erro ao criar notificação:', e));
-            }
+        if (!scaleData) {
+            scaleData = { id: scaleId, status, ...updatePayload };
+        }
 
-            if (leaderPhone) {
-                await this.sendLeaderAlert({
-                    leaderPhone,
-                    musicianName,
-                    roleName,
-                    setlistTitle,
-                    setlistDate
-                });
+        // 2. If declined, independently fetch details and notify leader
+        if (isDeclined && scaleData.setlist_id) {
+            try {
+                const [{ data: musicianProfile }, { data: setlistData }] = await Promise.all([
+                    supabase.from('profiles').select('name, full_name').eq('id', scaleData.user_id).maybeSingle(),
+                    supabase.from('setlists').select('name, title, date, created_by').eq('id', scaleData.setlist_id).maybeSingle()
+                ]);
+
+                const musicianName = musicianProfile?.name || musicianProfile?.full_name || 'Músico';
+                const roleName = scaleData.role || 'Escala';
+                const setlistTitle = setlistData?.title || setlistData?.name || 'Culto';
+                const setlistDate = setlistData?.date;
+                const leaderId = setlistData?.created_by;
+
+                let leaderPhone = null;
+                if (leaderId) {
+                    const { data: leaderProfile } = await supabase
+                        .from('profiles')
+                        .select('phone, whatsapp')
+                        .eq('id', leaderId)
+                        .maybeSingle();
+                    leaderPhone = leaderProfile?.whatsapp || leaderProfile?.phone;
+
+                    await supabase.from('notifications').insert({
+                        user_id: leaderId,
+                        title: '⚠️ Músico Recusou a Escala',
+                        message: `${musicianName} (${roleName}) informou que não poderá participar no culto "${setlistTitle}".`,
+                        type: 'WARNING',
+                        read: false
+                    }).catch(e => console.error('Erro ao criar notificação:', e));
+                }
+
+                if (leaderPhone) {
+                    await this.sendLeaderAlert({
+                        leaderPhone,
+                        musicianName,
+                        roleName,
+                        setlistTitle,
+                        setlistDate
+                    }).catch(err => console.warn('[WhatsAppService] Alert error:', err));
+                }
+            } catch (e) {
+                console.warn('[WhatsAppService] Error sending decline notifications:', e);
             }
         }
 
