@@ -243,29 +243,22 @@ export function UserEditModal({ user, onClose, onUserUpdated }) {
                                     className={`${inputClass()} ${phoneWarning ? 'border-amber-600 focus:ring-amber-500' : phoneIsValid ? 'border-emerald-700 focus:ring-emerald-500' : ''}`}
                                 />
                             </div>
-                            {/* Normalized number preview */}
-                            {formData.phone && (
-                                <div className={`flex items-center gap-1.5 text-[11px] px-2 py-1 rounded-lg border ${
-                                    phoneIsValid
+                            {/* Fixed-height feedback row — always rendered, visibility toggled to avoid layout shift */}
+                            <div className={`flex items-center gap-1.5 text-[11px] px-2 py-1 rounded-lg border transition-all duration-150 ${
+                                !formData.phone
+                                    ? 'bg-transparent border-transparent text-slate-500'
+                                    : phoneIsValid
                                         ? 'bg-emerald-900/20 border-emerald-800/60 text-emerald-400'
                                         : 'bg-amber-900/20 border-amber-800/60 text-amber-400'
-                                }`}>
-                                    {phoneIsValid
-                                        ? <Check size={12} />
-                                        : <AlertCircle size={12} />
-                                    }
-                                    {phoneIsValid
-                                        ? <>Número para WhatsApp: <strong className="font-mono">+{phoneNormalized}</strong></>
-                                        : 'Número inválido — verifique DDD + 9 dígitos (Brasil)'
-                                    }
-                                </div>
-                            )}
-                            {!formData.phone && (
-                                <p className="text-[10px] text-slate-500 italic flex items-center gap-1">
-                                    <Info size={10} />
-                                    Sem WhatsApp → notificações automáticas de escala serão ignoradas
-                                </p>
-                            )}
+                            }`}>
+                                {!formData.phone ? (
+                                    <><Info size={10} className="shrink-0" /><span className="italic">Sem WhatsApp → notificações de escala serão ignoradas</span></>
+                                ) : phoneIsValid ? (
+                                    <><Check size={12} className="shrink-0" /><span>Número para WhatsApp: <strong className="font-mono">+{phoneNormalized}</strong></span></>
+                                ) : (
+                                    <><AlertCircle size={12} className="shrink-0" /><span>Número inválido — verifique DDD + 9 dígitos (Brasil)</span></>
+                                )}
+                            </div>
                         </div>
 
                         <InputField label="Igreja Vinculada" icon={Shield}>
