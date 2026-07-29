@@ -65,6 +65,7 @@ function App() {
                   {/* Public Routes */}
                   <Route path="/" element={<LandingPage />} />
                   <Route path="/login" element={<LoginPage />} />
+                  <Route path="/signup" element={<LoginPage defaultMode="signup" />} />
                   <Route path="/confirm-email" element={<EmailConfirmationPage />} />
                   <Route path="/join/:token" element={<InvitationAcceptPage />} />
                   <Route path="/update-password" element={<UpdatePasswordPage />} />

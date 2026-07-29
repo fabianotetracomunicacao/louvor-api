@@ -1,15 +1,19 @@
 import React, { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { User, Lock, ArrowRight, Loader, Eye, EyeOff } from 'lucide-react';
 import { supabase } from '../supabaseClient';
 import { AsaasService } from '../services/AsaasService';
 
-export function LoginPage() {
+export function LoginPage({ defaultMode }) {
     const { login, signup, resetPassword } = useAuth();
     const navigate = useNavigate();
+    const [searchParams] = useSearchParams();
 
-    const [isLogin, setIsLogin] = useState(true);
+    const modeParam = searchParams.get('mode');
+    const redirectUrl = searchParams.get('redirect') || '/dashboard';
+
+    const [isLogin, setIsLogin] = useState(defaultMode !== 'signup' && modeParam !== 'signup');
     const [isForgot, setIsForgot] = useState(false);
     const [loading, setLoading] = useState(false);
     const [fullName, setFullName] = useState('');
@@ -23,9 +27,9 @@ export function LoginPage() {
     // Auto-redirect if already logged in
     React.useEffect(() => {
         if (!authLoading && user) {
-            navigate('/dashboard', { replace: true });
+            navigate(redirectUrl, { replace: true });
         }
-    }, [user, authLoading, navigate]);
+    }, [user, authLoading, navigate, redirectUrl]);
 
     // Auth State
     const [email, setEmail] = useState('');
@@ -48,7 +52,7 @@ export function LoginPage() {
                 setIsLogin(true);
             } else if (isLogin) {
                 await login(email, password);
-                navigate('/dashboard', { replace: true }); // Redirect to Dashboard (Home)
+                navigate(redirectUrl, { replace: true });
             } else {
                 // 1. Fetch default individual plan First
                 const { data: plans } = await supabase
@@ -84,18 +88,31 @@ export function LoginPage() {
                             {
                                 name: fullName,
                                 email: email,
-                                cpfCnpj: null // Could add CPF field later if strictly required
+                                cpfCnpj: null
                             }
                         );
                     } catch (subErr) {
                         console.error('Failed to create Asaas subscription during signup:', subErr);
-                        // We continue even if sub fails, but they will be OVERDUE/PENDING
                     }
                 }
 
-                // Switch to Login Mode immediately
+                // Try auto-login
+                if (signUpRes?.session) {
+                    navigate(redirectUrl, { replace: true });
+                    return;
+                }
+
+                try {
+                    await login(email, password);
+                    navigate(redirectUrl, { replace: true });
+                    return;
+                } catch (autoLoginErr) {
+                    console.info('[Signup] Auto-login paused, email confirmation needed:', autoLoginErr);
+                }
+
+                // Switch to Login Mode with informative message
                 setIsLogin(true);
-                setSuccessMessage('✅ Conta criada com sucesso! Verifique seu email e faça login.');
+                setSuccessMessage('✅ Conta criada com sucesso! Enviamos um e-mail de ativação. Por favor, confirme seu e-mail e faça login.');
 
                 // Clear extra fields
                 setFullName('');
@@ -104,7 +121,6 @@ export function LoginPage() {
                 setFavoriteStyle('');
                 setCity('');
                 setBirthDate('');
-                // Note: We keep email and password filled
             }
         } catch (err) {
             console.error(err);
@@ -112,9 +128,9 @@ export function LoginPage() {
             if (msg.includes('Invalid login credentials')) {
                 msg = 'E-mail ou senha incorretos.';
             } else if (msg.includes('Email not confirmed')) {
-                msg = 'E-mail não confirmado. Verifique sua caixa de entrada.';
+                msg = 'E-mail não confirmado. Verifique a mensagem de confirmação na sua caixa de entrada.';
             } else if (msg.includes('User already registered')) {
-                msg = 'Usuário já cadastrado.';
+                msg = 'Usuário já cadastrado no sistema. Faça login para continuar.';
             }
             setError(msg || 'Erro ao processar solicitação');
         } finally {
