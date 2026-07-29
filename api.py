@@ -393,7 +393,7 @@ def _catalog_for_selected_artist(artist_slug: str) -> dict | None:
 
         loaded_song_count += len(page_songs)
         for song in page_songs:
-            if not isinstance(song, dict):
+            if not isinstance(song, dict) or song.get("provider") != "cifraclub":
                 continue
 
             song_artist_slug = song.get("artist_slug")
@@ -416,6 +416,11 @@ def _catalog_for_selected_artist(artist_slug: str) -> dict | None:
                 "artist_slug": song_artist_slug,
                 "song_slug": song_slug,
                 "url": f"{CIFRACLUB_BASE_URL}/{song_artist_slug}/{song_slug}",
+                "provider": "cifraclub",
+                "version_id": song.get("version_id"),
+                "version_label": song.get("version_label"),
+                "version_tone": song.get("version_tone"),
+                "version_verified": song.get("version_verified") is True,
             })
 
         total_song_count = payload.get("total_songs_count")
