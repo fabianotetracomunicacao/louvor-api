@@ -6,6 +6,10 @@ const selectiveMigrationPath = 'supabase/migrations/20260729180000_enqueue_selec
 const selectiveSql = fs.existsSync(selectiveMigrationPath)
   ? fs.readFileSync(selectiveMigrationPath, 'utf8')
   : '';
+const claimFixMigrationPath = 'supabase/migrations/20260729211500_fix_cifraclub_claim_job_id.sql';
+const claimFixSql = fs.existsSync(claimFixMigrationPath)
+  ? fs.readFileSync(claimFixMigrationPath, 'utf8')
+  : '';
 const dockerfile = fs.readFileSync('Dockerfile', 'utf8');
 const passenger = fs.readFileSync('passenger_wsgi.py', 'utf8');
 const apiSource = fs.readFileSync('api.py', 'utf8');
@@ -170,6 +174,22 @@ if (!claimFunction) {
     'automatically paused jobs remain FIFO-eligible below the block limit'
   );
 }
+
+requireSourcePattern(
+  claimFixSql,
+  /create or replace function public\.claim_cifraclub_import_work\(/,
+  'a corrective migration for the production claim function'
+);
+rejectSourcePattern(
+  claimFixSql,
+  /\bwhere job_id\s*=/,
+  'claim SQL must qualify job_id to avoid PL/pgSQL output-column ambiguity'
+);
+requireSourcePattern(
+  claimFixSql,
+  /from public\.cifraclub_import_items as item[\s\S]*where item\.job_id = selected_job\.id/,
+  'qualified job_id references in the claim function'
+);
 
 requirePattern(
   /check \(status = 'imported' or song_id is null\)/,
