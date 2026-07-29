@@ -60,6 +60,10 @@ export function nextRunAt(now: Date, random = Math.random): Date {
   return new Date(now.getTime() + seconds * 1000);
 }
 
+export function blockedRunAt(now: Date): Date {
+  return new Date(now.getTime() + 10 * 60 * 1000);
+}
+
 export function retryRunAt(
   now: Date,
   attempts: number,

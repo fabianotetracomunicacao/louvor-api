@@ -1,5 +1,6 @@
 import { parseCifraClub } from "../_shared/cifraImporter.ts";
 import {
+  blockedRunAt,
   classifyUpstream,
   nextRunAt,
   normalizeIdentity,
@@ -321,7 +322,7 @@ async function processDiscovery(
     return await deps.pause(
       claim,
       `Catalog blocked with HTTP ${response.status}`,
-      retryRunAt(deps.now(), claim.attempts ?? 1, deps.random).toISOString(),
+      blockedRunAt(deps.now()).toISOString(),
     );
   }
   if (classification === "temporary") {
@@ -391,7 +392,7 @@ export async function processClaim(
     return await deps.pause(
       claim,
       `Cifra blocked with HTTP ${response.status}`,
-      retryRunAt(deps.now(), claim.attempts ?? 1, deps.random).toISOString(),
+      blockedRunAt(deps.now()).toISOString(),
     );
   }
   if (classification === "temporary") {

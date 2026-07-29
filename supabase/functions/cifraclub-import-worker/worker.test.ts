@@ -321,7 +321,7 @@ Deno.test("conflito unico resolvido pela RPC atomica vira skipped", async () => 
   assertEquals(result.status, "skipped");
 });
 
-Deno.test("bloqueio encapsulado em 502 pausa e agenda retomada", async () => {
+Deno.test("bloqueio encapsulado em 502 pausa por 10 minutos", async () => {
   let finished = false;
   let pauseReason = "";
   let pauseAt = "";
@@ -348,7 +348,7 @@ Deno.test("bloqueio encapsulado em 502 pausa e agenda retomada", async () => {
   assertEquals(result.status, "paused");
   assertEquals(finished, false);
   assertMatch(pauseReason, /502/);
-  assertEquals(pauseAt, "2026-07-28T12:01:00.000Z");
+  assertEquals(pauseAt, "2026-07-28T12:10:00.000Z");
 });
 
 Deno.test("503 reprograma o item sem contabilizar falha", async () => {
