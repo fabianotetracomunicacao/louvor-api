@@ -38,6 +38,11 @@ function isBlockedError(body: string): boolean {
       .test(error.error);
 }
 
+function isPermanentError(body: string): boolean {
+  const error = structuredError(body);
+  return error?.error_code === "missing_canonical_metadata";
+}
+
 export function classifyUpstream(
   status: number,
   body: string,
@@ -45,6 +50,7 @@ export function classifyUpstream(
   if (status === 403 || status === 429 || isBlockedError(body)) {
     return "blocked";
   }
+  if (isPermanentError(body)) return "permanent";
   if (status === 408 || status === 425 || status >= 500) return "temporary";
   return "permanent";
 }

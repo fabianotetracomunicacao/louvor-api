@@ -162,6 +162,40 @@ Deno.test("classifica falhas temporarias e permanentes", () => {
   assertEquals(classifyUpstream(200, ""), "permanent");
 });
 
+Deno.test("metadados canonicos ausentes falham sem retry", async () => {
+  const body = JSON.stringify({
+    error: "Metadados canônicos ausentes na página da cifra",
+    error_code: "missing_canonical_metadata",
+  });
+  assertEquals(classifyUpstream(422, body), "permanent");
+  assertEquals(classifyUpstream(500, body), "permanent");
+
+  let retried = false;
+  let finishedStatus = "";
+  const result = await processClaim(
+    fixtureClaim,
+    workerDeps({
+      fetchCifra: async () => ({
+        status: 500,
+        body,
+        data: null,
+      }),
+      retryItem: async () => {
+        retried = true;
+        return { status: "retrying" };
+      },
+      finish: async (_claim, outcome) => {
+        finishedStatus = outcome.status;
+        return { status: outcome.status };
+      },
+    }),
+  );
+
+  assertEquals(result.status, "failed");
+  assertEquals(finishedStatus, "failed");
+  assertEquals(retried, false);
+});
+
 Deno.test("agenda a proxima execucao entre 30 e 60 segundos", () => {
   const now = new Date("2026-07-28T12:00:00.000Z");
 

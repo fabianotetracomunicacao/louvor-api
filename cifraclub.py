@@ -85,6 +85,7 @@ class CifraClub():
         artist = artist_elem.get_text(strip=True) if artist_elem else ""
         if not title or not artist:
             result["error"] = "Metadados canônicos ausentes na página da cifra"
+            result["error_code"] = "missing_canonical_metadata"
             return False
 
         result["name"] = title

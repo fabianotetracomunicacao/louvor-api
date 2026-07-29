@@ -635,7 +635,11 @@ def get_cifra(artist, song):
             status = (
                 upstream_status
                 if upstream_status in {403, 429}
-                else 403 if result.get("blocked") else 500
+                else 403
+                if result.get("blocked")
+                else 422
+                if result.get("error_code") == "missing_canonical_metadata"
+                else 500
             )
             return jsonify(result), status
         

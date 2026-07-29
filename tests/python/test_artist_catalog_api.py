@@ -232,18 +232,31 @@ class CifraClubHttpIdentityTestCase(unittest.TestCase):
         self,
         requests_get,
     ):
-        response = MagicMock(
-            status_code=200,
-            text="<div class='cifra_cnt'><pre>G\\nLetra</pre></div>",
-        )
-        requests_get.return_value = response
+        cases = {
+            "title": (
+                "<h2 class='t3'>Artista</h2>"
+                "<div class='cifra_cnt'><pre>G\\nLetra</pre></div>"
+            ),
+            "artist": (
+                "<h1 class='t1'>Canção</h1>"
+                "<div class='cifra_cnt'><pre>G\\nLetra</pre></div>"
+            ),
+        }
 
-        result = self.client.get("/api/artists/artista/songs/cancao")
+        for missing_field, html in cases.items():
+            with self.subTest(missing_field=missing_field):
+                requests_get.return_value = MagicMock(status_code=200, text=html)
 
-        self.assertEqual(result.status_code, 500)
-        self.assertIn("metadados", result.json["error"].lower())
-        self.assertNotIn("name", result.json)
-        self.assertNotIn("artist", result.json)
+                result = self.client.get("/api/artists/artista/songs/cancao")
+
+                self.assertEqual(result.status_code, 422)
+                self.assertEqual(
+                    result.json["error_code"],
+                    "missing_canonical_metadata",
+                )
+                self.assertIn("metadados", result.json["error"].lower())
+                self.assertNotIn("name", result.json)
+                self.assertNotIn("artist", result.json)
 
     @patch("cifraclub.requests.get")
     def test_detail_classifies_http_200_captcha_without_pre_as_blocked(
