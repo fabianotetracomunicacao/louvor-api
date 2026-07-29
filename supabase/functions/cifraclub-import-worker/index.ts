@@ -2,6 +2,7 @@ import { parseCifraClub } from "../_shared/cifraImporter.ts";
 import {
   classifyUpstream,
   nextRunAt,
+  normalizeIdentity,
   retryRunAt,
 } from "../_shared/importQueue.ts";
 
@@ -114,6 +115,7 @@ export interface WorkerDeps {
     reason: string,
     nextRunAt: string,
   ): Promise<ProcessResult>;
+  log?(event: string, context: Record<string, unknown>): void;
   now(): Date;
   random(): number;
 }
@@ -145,6 +147,21 @@ function requiredString(
   return value.trim();
 }
 
+const MISSING_CANONICAL_SENTINELS = new Set([
+  "titulo nao encontrado",
+  "artista nao encontrado",
+  "title not found",
+  "artist not found",
+]);
+
+function requiredCanonicalString(value: unknown, field: string): string {
+  const canonical = requiredString(value, field);
+  if (MISSING_CANONICAL_SENTINELS.has(normalizeIdentity(canonical))) {
+    throw new Error(`Invalid upstream field: ${field}`);
+  }
+  return canonical;
+}
+
 function validateCanonical(
   claim: ImportClaim,
   data: unknown,
@@ -169,8 +186,8 @@ function validateCanonical(
     : [];
 
   return {
-    title: requiredString(data.name, "name"),
-    artist: requiredString(data.artist, "artist"),
+    title: requiredCanonicalString(data.name, "name"),
+    artist: requiredCanonicalString(data.artist, "artist"),
     lines: data.cifra,
     sourceUrl,
     youtubeLinks,
@@ -246,6 +263,29 @@ function errorMessage(error: unknown): string {
   return String(error);
 }
 
+function isTransientWorkerError(error: unknown): boolean {
+  if (!isRecord(error)) return false;
+  if (error.transient === true) return true;
+
+  const status = Number(error.status);
+  return status === 408 || status === 425 || status === 429 || status >= 500;
+}
+
+function logClaim(
+  deps: WorkerDeps,
+  event: string,
+  claim: ImportClaim,
+  details: Record<string, unknown> = {},
+): void {
+  deps.log?.(event, {
+    jobId: claim.jobId,
+    itemId: claim.itemId,
+    artistSlug: claim.artistSlug,
+    songSlug: claim.songSlug,
+    ...details,
+  });
+}
+
 async function finish(
   claim: ImportClaim,
   deps: WorkerDeps,
@@ -315,6 +355,10 @@ export async function processClaim(
   claim: ImportClaim,
   deps: WorkerDeps,
 ): Promise<ProcessResult> {
+  logClaim(deps, "claim_started", claim, {
+    needsDiscovery: claim.needsDiscovery,
+  });
+
   if (claim.needsDiscovery) {
     if (!claim.claimToken) throw new Error("Invalid discovery claim");
     return await processDiscovery(claim, deps);
@@ -372,6 +416,21 @@ export async function processClaim(
     return { status: "failed", reason };
   }
 
+  const titleDiverged = Boolean(
+    claim.songName &&
+      normalizeIdentity(claim.songName) !== normalizeIdentity(canonical.title),
+  );
+  const artistDiverged = normalizeIdentity(claim.artistName) !==
+    normalizeIdentity(canonical.artist);
+  if (titleDiverged || artistDiverged) {
+    logClaim(deps, "canonical_metadata_divergence", claim, {
+      catalogTitle: claim.songName,
+      canonicalTitle: canonical.title,
+      catalogArtist: claim.artistName,
+      canonicalArtist: canonical.artist,
+    });
+  }
+
   const duplicateAfterFetch = await deps.findCanonicalDuplicate(
     canonical.title,
     canonical.artist,
@@ -394,6 +453,13 @@ export async function processClaim(
     };
   } catch (error) {
     const reason = errorMessage(error);
+    if (isTransientWorkerError(error)) {
+      return await deps.retryItem(
+        claim,
+        reason,
+        retryRunAt(deps.now(), claim.attempts ?? 1, deps.random).toISOString(),
+      );
+    }
     await finish(claim, deps, "failed", null, reason);
     return { status: "failed", reason };
   }
@@ -504,7 +570,15 @@ function databaseError(status: number, data: unknown, body: string): Error {
     isRecord(data) && typeof data.message === "string"
       ? data.message
       : `Database request failed with HTTP ${status}`,
-  ) as Error & { code?: string; details?: string };
+  ) as Error & {
+    code?: string;
+    details?: string;
+    status?: number;
+    transient?: boolean;
+  };
+  error.status = status;
+  error.transient = status === 408 || status === 425 || status === 429 ||
+    status >= 500;
   if (isRecord(data) && typeof data.code === "string") error.code = data.code;
   if (isRecord(data) && typeof data.details === "string") {
     error.details = data.details;
@@ -541,11 +615,20 @@ export function createProductionRuntime(
     body: unknown,
     headers: Record<string, string> = {},
   ): Promise<unknown> {
-    const response = await fetcher(`${restUrl}/${path}`, {
-      method: "POST",
-      headers: { ...databaseHeaders, ...headers },
-      body: JSON.stringify(body),
-    });
+    let response: Response;
+    try {
+      response = await fetcher(`${restUrl}/${path}`, {
+        method: "POST",
+        headers: { ...databaseHeaders, ...headers },
+        body: JSON.stringify(body),
+      });
+    } catch {
+      const error = new Error("Database request failed") as Error & {
+        transient?: boolean;
+      };
+      error.transient = true;
+      throw error;
+    }
     const parsed = await responseData(response);
     if (!response.ok) {
       throw databaseError(response.status, parsed.data, parsed.body);
@@ -738,6 +821,9 @@ export function createProductionRuntime(
         },
       );
       return { status: "paused", reason };
+    },
+    log: (event, context) => {
+      console.info(JSON.stringify({ event, ...context }));
     },
     now: config.now ?? (() => new Date()),
     random: config.random ?? Math.random,

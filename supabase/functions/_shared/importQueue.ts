@@ -10,16 +10,41 @@ export function normalizeIdentity(value: string): string {
     .replace(/\s+/g, " ");
 }
 
-function isBlockedBody(body: string): boolean {
-  return /captcha|recaptcha|cloudflare|cf-chl-|challenge|access denied|forbidden|robot check|rate limit|too many requests|"upstream_status"\s*:\s*(403|429)/i
-    .test(body);
+function structuredError(body: string): Record<string, unknown> | null {
+  try {
+    const parsed = JSON.parse(body);
+    return typeof parsed === "object" && parsed !== null &&
+        !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function isBlockedError(body: string): boolean {
+  const error = structuredError(body);
+  if (!error) return false;
+
+  const upstreamStatus = Number(error.upstream_status);
+  if (
+    error.blocked === true || upstreamStatus === 403 || upstreamStatus === 429
+  ) {
+    return true;
+  }
+
+  return typeof error.error === "string" &&
+    /captcha|recaptcha|cloudflare|cf-chl-|challenge|access denied|forbidden|robot check|rate limit|too many requests/i
+      .test(error.error);
 }
 
 export function classifyUpstream(
   status: number,
   body: string,
 ): UpstreamClassification {
-  if (status === 403 || status === 429 || isBlockedBody(body)) return "blocked";
+  if (status === 403 || status === 429 || isBlockedError(body)) {
+    return "blocked";
+  }
   if (status === 408 || status === 425 || status >= 500) return "temporary";
   return "permanent";
 }

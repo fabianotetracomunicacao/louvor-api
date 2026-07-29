@@ -40,6 +40,7 @@ BLOCKED_BODY_PATTERN = re.compile(
     r"\b(captcha|challenge|access denied|forbidden|too many requests|cloudflare)\b",
     re.IGNORECASE,
 )
+SLUG_PATTERN = re.compile(r"[a-z0-9-]+")
 
 
 class UpstreamBlockedError(Exception):
@@ -59,6 +60,10 @@ def _raise_if_upstream_blocked(response):
         looks_like_html and BLOCKED_BODY_PATTERN.search(body)
     ):
         raise UpstreamBlockedError(response)
+
+
+def _is_valid_slug(value: str) -> bool:
+    return bool(SLUG_PATTERN.fullmatch(value))
 
 # Gospel genre keywords for matching
 GOSPEL_KEYWORDS = {"gospel", "religioso", "gospel/religioso", "crist\u00e3", "cristao", "worship"}
@@ -330,7 +335,7 @@ def _sanitize_artist_candidates(artists: list) -> list[dict]:
             or not isinstance(name, str)
             or not name.strip()
             or not isinstance(slug, str)
-            or not re.fullmatch(r"[a-z0-9-]+", slug)
+            or not _is_valid_slug(slug)
             or slug in seen_slugs
         ):
             continue
@@ -380,7 +385,7 @@ def _catalog_for_selected_artist(artist_slug: str) -> dict | None:
         if (
             song_artist_slug != artist_slug
             or not isinstance(song_slug, str)
-            or not re.fullmatch(r"[a-z0-9-]+", song_slug)
+            or not _is_valid_slug(song_slug)
         ):
             continue
 
@@ -426,7 +431,7 @@ def artist_suggest():
 
 @app.get("/api/artists/<artist_slug>/catalog")
 def artist_catalog(artist_slug):
-    if not re.fullmatch(r"[a-z0-9-]+", artist_slug):
+    if not _is_valid_slug(artist_slug):
         return jsonify({"error": "Invalid artist slug"}), 400
 
     try:
@@ -612,9 +617,13 @@ def search():
         logger.error(f"Error searching: {e}")
         return jsonify({'error': f'Search failed: {str(e)}'}), 500
 
+@app.route('/api/artists/<artist>/songs/<song>')
 @app.route('/artists/<artist>/songs/<song>')
 def get_cifra(artist, song):
     """Get cifra by artist and song"""
+    if not (_is_valid_slug(artist) and _is_valid_slug(song)):
+        return jsonify({"error": "Invalid artist or song slug"}), 400
+
     logger.info(f"Requisi\u00e7\u00e3o recebida: artist={artist}, song={song}")
     try:
         cifraclub = CifraClub()

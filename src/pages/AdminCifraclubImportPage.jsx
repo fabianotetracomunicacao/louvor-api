@@ -11,6 +11,8 @@ import {
     cancelImportJob,
     enqueueArtist,
     listImportJobs,
+    previewArtistCatalog,
+    resumeImportJob,
     retryImportFailures,
     searchArtists,
     subscribeToImportJobs,
@@ -48,7 +50,20 @@ function getCompletedCount(job) {
 }
 
 function isQueuedJob(job) {
-    return QUEUE_STATUSES.has(job.status);
+    return QUEUE_STATUSES.has(job.status) || isAutomaticallyPaused(job);
+}
+
+function getBlockedRetryLimit(job) {
+    return Number.isInteger(job.blocked_retry_limit) && job.blocked_retry_limit > 0
+        ? job.blocked_retry_limit
+        : 3;
+}
+
+function isAutomaticallyPaused(job) {
+    const blockedCount = job.blocked_count || 0;
+    return job.status === 'paused'
+        && blockedCount > 0
+        && blockedCount < getBlockedRetryLimit(job);
 }
 
 function getCreatedAt(job) {
@@ -72,6 +87,25 @@ function formatNextRunAt(nextRunAt) {
         dateStyle: 'short',
         timeStyle: 'short',
     });
+}
+
+function getLastActivityAt(job) {
+    const activityTimes = [
+        job.updated_at,
+        ...(job.items || []).map((item) => item.updated_at),
+    ]
+        .map((value) => Date.parse(value || ''))
+        .filter((value) => !Number.isNaN(value));
+
+    return activityTimes.length > 0
+        ? new Date(Math.max(...activityTimes)).toISOString()
+        : null;
+}
+
+function getItemErrors(job) {
+    return (job.items || [])
+        .filter((item) => item.last_error)
+        .sort((left, right) => Date.parse(right.updated_at || '') - Date.parse(left.updated_at || ''));
 }
 
 function JobStatus({ status }) {
@@ -98,11 +132,13 @@ export function AdminCifraclubImportPage() {
     const [selectedArtist, setSelectedArtist] = useState(null);
     const [jobs, setJobs] = useState([]);
     const [isSearching, setIsSearching] = useState(false);
+    const [previewingSlug, setPreviewingSlug] = useState(null);
     const [isEnqueueing, setIsEnqueueing] = useState(false);
     const [actionJobId, setActionJobId] = useState(null);
     const [searchError, setSearchError] = useState('');
     const [queueError, setQueueError] = useState('');
     const searchRequestId = useRef(0);
+    const previewRequestId = useRef(0);
     const refreshRequestId = useRef(0);
     const isMounted = useRef(false);
 
@@ -144,9 +180,11 @@ export function AdminCifraclubImportPage() {
 
     const handleQueryChange = (event) => {
         searchRequestId.current += 1;
+        previewRequestId.current += 1;
         setQuery(event.target.value);
         setArtists([]);
         setSelectedArtist(null);
+        setPreviewingSlug(null);
         setSearchError('');
         setIsSearching(false);
     };
@@ -158,8 +196,10 @@ export function AdminCifraclubImportPage() {
         if (!normalizedQuery) return;
 
         const requestId = ++searchRequestId.current;
+        previewRequestId.current += 1;
         setSearchError('');
         setSelectedArtist(null);
+        setPreviewingSlug(null);
         setIsSearching(true);
 
         try {
@@ -175,6 +215,28 @@ export function AdminCifraclubImportPage() {
         } finally {
             if (requestId === searchRequestId.current) {
                 setIsSearching(false);
+            }
+        }
+    };
+
+    const handleSelectArtist = async (artist) => {
+        const requestId = ++previewRequestId.current;
+        setSelectedArtist(null);
+        setPreviewingSlug(artist.slug);
+        setSearchError('');
+
+        try {
+            const previewedArtist = await previewArtistCatalog(artist);
+            if (requestId !== previewRequestId.current) return;
+
+            setSelectedArtist(previewedArtist);
+        } catch (error) {
+            if (requestId !== previewRequestId.current) return;
+
+            setSearchError(getErrorMessage(error, 'Não foi possível consultar o catálogo do artista.'));
+        } finally {
+            if (requestId === previewRequestId.current) {
+                setPreviewingSlug(null);
             }
         }
     };
@@ -224,6 +286,20 @@ export function AdminCifraclubImportPage() {
         }
     };
 
+    const handleResume = async (job) => {
+        setActionJobId(job.id);
+        setQueueError('');
+
+        try {
+            await resumeImportJob(job.id);
+            await refreshJobs();
+        } catch (error) {
+            setQueueError(getErrorMessage(error, 'Não foi possível retomar a importação.'));
+        } finally {
+            setActionJobId(null);
+        }
+    };
+
     return (
         <main className="mx-auto w-full max-w-6xl space-y-6 px-4 py-6 sm:px-6">
             <header className="flex flex-col gap-2 border-b border-slate-200 pb-4 dark:border-slate-800 sm:flex-row sm:items-end sm:justify-between">
@@ -261,7 +337,7 @@ export function AdminCifraclubImportPage() {
                     <button
                         type="button"
                         onClick={handleEnqueue}
-                        disabled={!selectedArtist || isEnqueueing}
+                        disabled={!selectedArtist || isEnqueueing || previewingSlug !== null}
                         className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-indigo-200 bg-indigo-50 px-3 text-sm font-semibold text-indigo-700 transition hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-indigo-900 dark:bg-indigo-950/40 dark:text-indigo-300 dark:hover:bg-indigo-950/70"
                     >
                         <ListMusic size={17} aria-hidden="true" />
@@ -275,21 +351,31 @@ export function AdminCifraclubImportPage() {
                     {artists.length > 0 && (
                         <div role="listbox" aria-label="Artistas encontrados" className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
                             {artists.map((artist) => {
-                                const isSelected = selectedArtist?.slug === artist.slug;
+                                const isSelected = selectedArtist?.slug === artist.slug
+                                    || previewingSlug === artist.slug;
+                                const previewedTotal = selectedArtist?.slug === artist.slug
+                                    ? selectedArtist.total
+                                    : artist.total;
                                 return (
                                     <button
                                         key={artist.slug}
                                         type="button"
                                         role="option"
                                         aria-selected={isSelected}
-                                        onClick={() => setSelectedArtist(artist)}
+                                        onClick={() => void handleSelectArtist(artist)}
                                         className={`flex min-h-12 items-center justify-between rounded-md border px-3 py-2 text-left transition ${isSelected
                                             ? 'border-indigo-500 bg-indigo-50 text-indigo-950 dark:border-indigo-400 dark:bg-indigo-950/40 dark:text-indigo-100'
                                             : 'border-slate-200 text-slate-800 hover:border-slate-300 dark:border-slate-800 dark:text-slate-200 dark:hover:border-slate-700'
                                         }`}
                                     >
                                         <span className="font-medium">{artist.name}</span>
-                                        <span className="text-xs text-slate-500 dark:text-slate-400">{artist.total || 0} cifras</span>
+                                        <span className="text-xs text-slate-500 dark:text-slate-400">
+                                            {previewingSlug === artist.slug
+                                                ? 'Consultando catálogo'
+                                                : Number.isInteger(previewedTotal)
+                                                    ? `${previewedTotal} cifras`
+                                                    : 'Ver catálogo'}
+                                        </span>
                                     </button>
                                 );
                             })}
@@ -318,8 +404,13 @@ export function AdminCifraclubImportPage() {
                             const completedCount = getCompletedCount(job);
                             const isPending = job.status === 'pending';
                             const isQueued = isQueuedJob(job);
+                            const isAutoPaused = isAutomaticallyPaused(job);
                             const canRetry = job.status === 'completed_with_errors';
+                            const canResume = job.status === 'paused' && !isAutoPaused;
                             const isActing = actionJobId === job.id;
+                            const blockedRetryLimit = getBlockedRetryLimit(job);
+                            const itemErrors = getItemErrors(job);
+                            const lastActivityAt = getLastActivityAt(job);
 
                             return (
                                 <article key={job.id} className="border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
@@ -331,7 +422,24 @@ export function AdminCifraclubImportPage() {
                                                 {isQueued && <span className="text-xs text-slate-500 dark:text-slate-400">Ordem {index + 1}</span>}
                                             </div>
                                             {job.last_error && <p className="mt-2 text-sm text-rose-600 dark:text-rose-400">{job.last_error}</p>}
-                                            {job.status === 'paused' && <p className="mt-2 text-sm text-amber-700 dark:text-amber-300">Próxima tentativa: {formatNextRunAt(job.next_run_at)}</p>}
+                                            {isAutoPaused && (
+                                                <p className="mt-2 text-sm text-amber-700 dark:text-amber-300">
+                                                    Bloqueio {job.blocked_count} de {blockedRetryLimit}. Nova tentativa automática: {formatNextRunAt(job.next_run_at)}
+                                                </p>
+                                            )}
+                                            {canResume && (
+                                                <p className="mt-2 text-sm text-amber-700 dark:text-amber-300">
+                                                    {job.blocked_count >= blockedRetryLimit
+                                                        ? `Limite de ${blockedRetryLimit} bloqueios atingido. `
+                                                        : 'Importação pausada. '}
+                                                    Retomada manual necessária.
+                                                </p>
+                                            )}
+                                            {lastActivityAt && (
+                                                <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+                                                    Última atividade: {formatNextRunAt(lastActivityAt)}
+                                                </p>
+                                            )}
                                         </div>
 
                                         <div className="flex shrink-0 items-center gap-2">
@@ -361,6 +469,19 @@ export function AdminCifraclubImportPage() {
                                                     Tentar novamente
                                                 </button>
                                             )}
+                                            {canResume && (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleResume(job)}
+                                                    disabled={isActing}
+                                                    aria-label={`Retomar importação de ${job.artist_name}`}
+                                                    title={`Retomar importação de ${job.artist_name}`}
+                                                    className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-amber-200 px-2.5 text-sm font-medium text-amber-800 transition hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-amber-900 dark:text-amber-300 dark:hover:bg-amber-950/40"
+                                                >
+                                                    <RotateCcw size={16} aria-hidden="true" />
+                                                    Retomar
+                                                </button>
+                                            )}
                                         </div>
                                     </div>
 
@@ -378,6 +499,25 @@ export function AdminCifraclubImportPage() {
                                         </div>
                                         <span className="text-right text-sm font-semibold tabular-nums text-slate-700 dark:text-slate-200">{progress}%</span>
                                     </div>
+
+                                    {itemErrors.length > 0 && (
+                                        <section aria-label={`Erros de ${job.artist_name}`} className="mt-4 border-t border-slate-200 pt-3 dark:border-slate-800">
+                                            <h4 className="text-sm font-semibold text-slate-800 dark:text-slate-200">Erros por música</h4>
+                                            <ul className="mt-2 divide-y divide-slate-200 dark:divide-slate-800">
+                                                {itemErrors.map((item) => (
+                                                    <li key={item.id} className="py-2 first:pt-0 last:pb-0">
+                                                        <div className="flex flex-wrap items-baseline justify-between gap-2">
+                                                            <span className="text-sm font-medium text-slate-800 dark:text-slate-200">{item.song_name}</span>
+                                                            <span className="text-xs text-slate-500 dark:text-slate-400">
+                                                                {item.attempts || 0} {(item.attempts || 0) === 1 ? 'tentativa' : 'tentativas'}
+                                                            </span>
+                                                        </div>
+                                                        <p className="mt-1 text-sm text-rose-600 dark:text-rose-400">{item.last_error}</p>
+                                                    </li>
+                                                ))}
+                                            </ul>
+                                        </section>
+                                    )}
                                 </article>
                             );
                         })}

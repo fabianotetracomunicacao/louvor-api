@@ -15,6 +15,8 @@ import {
     cancelImportJob,
     enqueueArtist,
     listImportJobs,
+    previewArtistCatalog,
+    resumeImportJob,
     retryImportFailures,
     searchArtists,
     subscribeToImportJobs,
@@ -30,7 +32,7 @@ describe('cifraclub import queue client', () => {
         fetch.mockResolvedValue({
             ok: true,
             json: vi.fn().mockResolvedValue({
-                artists: [{ name: 'Oficina G3', slug: 'oficina-g3', total: 80 }],
+                artists: [{ id: 10, name: 'Oficina G3', slug: 'oficina-g3' }],
             }),
         });
 
@@ -39,7 +41,34 @@ describe('cifraclub import queue client', () => {
         expect(fetch).toHaveBeenCalledWith(
             expect.stringContaining('/artists/suggest?q=Oficina%20G3'),
         );
-        expect(artists).toEqual([{ name: 'Oficina G3', slug: 'oficina-g3', total: 80 }]);
+        expect(artists).toEqual([{ id: 10, name: 'Oficina G3', slug: 'oficina-g3' }]);
+    });
+
+    it('previews the exact selected catalog before enqueueing', async () => {
+        fetch.mockResolvedValue({
+            ok: true,
+            json: vi.fn().mockResolvedValue({
+                artist: { id: 10, name: 'Oficina G3', slug: 'oficina-g3' },
+                songs: [{ song_slug: 'resposta' }, { song_slug: 'ele-vive' }],
+                total: 2,
+            }),
+        });
+
+        const artist = await previewArtistCatalog({
+            id: 10,
+            name: 'Oficina G3',
+            slug: 'oficina-g3',
+        });
+
+        expect(fetch).toHaveBeenCalledWith(
+            expect.stringContaining('/artists/oficina-g3/catalog'),
+        );
+        expect(artist).toEqual({
+            id: 10,
+            name: 'Oficina G3',
+            slug: 'oficina-g3',
+            total: 2,
+        });
     });
 
     it('sends the selected artist to the enqueue RPC', async () => {
@@ -52,6 +81,16 @@ describe('cifraclub import queue client', () => {
             p_artist_slug: 'oficina-g3',
             p_estimated_total: 80,
         });
+    });
+
+    it('rejects enqueueing a suggestion whose catalog total was not previewed', async () => {
+        await expect(enqueueArtist({
+            id: 10,
+            name: 'Oficina G3',
+            slug: 'oficina-g3',
+        })).rejects.toThrow(/total/i);
+
+        expect(supabase.rpc).not.toHaveBeenCalled();
     });
 
     it('lists jobs with their import items in newest-first order', async () => {
@@ -80,6 +119,14 @@ describe('cifraclub import queue client', () => {
         await retryImportFailures('job-1');
 
         expect(supabase.rpc).toHaveBeenCalledWith('retry_cifraclub_import_failures', { p_job_id: 'job-1' });
+    });
+
+    it('resumes a manually paused job through the protected RPC', async () => {
+        supabase.rpc.mockResolvedValue({ data: { id: 'job-1', status: 'processing' }, error: null });
+
+        await resumeImportJob('job-1');
+
+        expect(supabase.rpc).toHaveBeenCalledWith('resume_cifraclub_import', { p_job_id: 'job-1' });
     });
 
     it('subscribes to job and item changes and removes the channel on cleanup', () => {

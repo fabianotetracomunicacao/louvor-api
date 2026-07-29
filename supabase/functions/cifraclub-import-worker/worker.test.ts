@@ -120,15 +120,38 @@ Deno.test("identidade ignora acento, caixa e pontuacao", () => {
   assertEquals(normalizeIdentity("  A   mesma---musica. "), "a mesma musica");
 });
 
-Deno.test("403 e captcha pausam a fila", () => {
+Deno.test("status e erro estruturado de bloqueio pausam a fila", () => {
   assertEquals(classifyUpstream(403, ""), "blocked");
-  assertEquals(classifyUpstream(200, "captcha challenge"), "blocked");
+  assertEquals(
+    classifyUpstream(
+      200,
+      '{"error":"captcha challenge","blocked":true,"upstream_status":200}',
+    ),
+    "blocked",
+  );
   assertEquals(
     classifyUpstream(
       502,
       '{"error":"Forbidden","upstream_status":403}',
     ),
     "blocked",
+  );
+});
+
+Deno.test("letra valida nunca e classificada como bloqueio", () => {
+  assertEquals(
+    classifyUpstream(
+      200,
+      JSON.stringify({
+        name: "Desafio",
+        artist: "Banda",
+        cifra: [
+          "Eu aceito o challenge",
+          "Livre do forbidden e do rate limit",
+        ],
+      }),
+    ),
+    "permanent",
   );
 });
 
@@ -321,6 +344,106 @@ Deno.test("503 reprograma o item sem contabilizar falha", async () => {
   assertEquals(finished, false);
 });
 
+Deno.test("falha transitoria da importacao atomica reprograma o item", async () => {
+  let retryAt = "";
+  let finished = false;
+  const transientError = Object.assign(
+    new Error("Database request failed with HTTP 503"),
+    { status: 503 },
+  );
+  const result = await processClaim(
+    { ...fixtureClaim, attempts: 3 },
+    workerDeps({
+      importSong: async () => {
+        throw transientError;
+      },
+      retryItem: async (_claim, _reason, nextRunAt) => {
+        retryAt = nextRunAt;
+        return { status: "retrying" };
+      },
+      finish: async () => {
+        finished = true;
+        return { status: "failed" };
+      },
+    }),
+  );
+
+  assertEquals(result.status, "retrying");
+  assertEquals(retryAt, "2026-07-28T12:02:00.000Z");
+  assertEquals(finished, false);
+});
+
+Deno.test("nomes sentinela de metadados ausentes sao rejeitados", async () => {
+  for (
+    const [field, value] of [
+      ["name", "Título não encontrado"],
+      ["artist", "Artista não encontrado"],
+    ]
+  ) {
+    let inserted = false;
+    const data = {
+      name: "Canção",
+      artist: "Artista",
+      cifra: ["G", "Letra"],
+      [field]: value,
+    };
+    const result = await processClaim(
+      fixtureClaim,
+      workerDeps({
+        fetchCifra: async () => ({
+          status: 200,
+          body: JSON.stringify(data),
+          data,
+        }),
+        importSong: async () => {
+          inserted = true;
+          return { status: "imported", songId: "never" };
+        },
+      }),
+    );
+
+    assertEquals(result.status, "failed");
+    assertEquals(inserted, false);
+    assertMatch(result.reason ?? "", /Invalid upstream field/);
+  }
+});
+
+Deno.test("logs incluem IDs e divergencias dos metadados canonicos", async () => {
+  const logs: Array<{ event: string; context: Record<string, unknown> }> = [];
+  const deps = workerDeps() as WorkerDeps & {
+    log(event: string, context: Record<string, unknown>): void;
+  };
+  deps.log = (event, context) => logs.push({ event, context });
+
+  await processClaim(
+    fixtureClaim,
+    {
+      ...deps,
+      fetchCifra: async () => ({
+        status: 200,
+        body: "{}",
+        data: {
+          name: "Título canônico",
+          artist: "Artista canônico",
+          cifra: ["G", "Letra"],
+        },
+      }),
+    },
+  );
+
+  const started = logs.find((entry) => entry.event === "claim_started");
+  assertEquals(started?.context.jobId as string, "job-1");
+  assertEquals(started?.context.itemId as string, "item-1");
+
+  const divergence = logs.find((entry) =>
+    entry.event === "canonical_metadata_divergence"
+  );
+  assertEquals(divergence?.context.catalogTitle as string, "Canção");
+  assertEquals(divergence?.context.canonicalTitle as string, "Título canônico");
+  assertEquals(divergence?.context.jobId as string, "job-1");
+  assertEquals(divergence?.context.itemId as string, "item-1");
+});
+
 Deno.test("descoberta salva artista canonico e agenda intervalo antes do primeiro item", async () => {
   const discoveryClaim: ImportClaim = {
     ...fixtureClaim,
@@ -443,7 +566,7 @@ Deno.test("adaptador de producao usa RPCs, fencing e API sem rede real", async (
     supabaseUrl: "https://project.supabase.co",
     serviceRoleKey: "service-role",
     cifraCatalogApiUrl: "https://cifra.example/api",
-    cifraDetailApiUrl: "https://cifra.example",
+    cifraDetailApiUrl: "https://cifra.example/api",
     leaseSeconds: 120,
     now: () => new Date("2026-07-28T12:00:00.000Z"),
     random: () => 0,
@@ -484,7 +607,7 @@ Deno.test("adaptador de producao usa RPCs, fencing e API sem rede real", async (
         songs: [],
       });
     }
-    if (url === "https://cifra.example/artists/artista/songs/cancao") {
+    if (url === "https://cifra.example/api/artists/artista/songs/cancao") {
       return Response.json({
         name: "Canção",
         artist: "Artista Canônico",
@@ -514,7 +637,7 @@ Deno.test("adaptador de producao usa RPCs, fencing e API sem rede real", async (
     "https://project.supabase.co/rest/v1/rpc/validate_cifraclub_import_worker_secret",
     "https://project.supabase.co/rest/v1/rpc/claim_cifraclub_import_work",
     "https://project.supabase.co/rest/v1/rpc/find_cifraclub_song_duplicate",
-    "https://cifra.example/artists/artista/songs/cancao",
+    "https://cifra.example/api/artists/artista/songs/cancao",
     "https://project.supabase.co/rest/v1/rpc/find_cifraclub_song_duplicate",
     "https://project.supabase.co/rest/v1/rpc/import_cifraclub_song",
   ]);

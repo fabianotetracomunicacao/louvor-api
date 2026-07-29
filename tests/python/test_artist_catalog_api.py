@@ -16,6 +16,7 @@ class ArtistCatalogApiTestCase(unittest.TestCase):
         self.requests_get.return_value.json.return_value = {
             "artists": [
                 {"id": 10, "name": "Fernandinho", "slug": "fernandinho"},
+                {"id": 99, "name": "Fernandinho duplicado", "slug": "fernandinho"},
                 {"id": 11, "name": "Fernando", "slug": "fernando"},
             ]
         }
@@ -145,13 +146,40 @@ class ArtistCatalogApiTestCase(unittest.TestCase):
         self.assertEqual(response.json["upstream_status"], 200)
 
     @patch("api.CifraClub.cifra")
+    def test_detail_is_available_below_api_and_legacy_routes(self, cifra):
+        cifra.return_value = {"name": "Canção", "artist": "Artista", "cifra": ["G"]}
+
+        api_response = self.client.get("/api/artists/artista/songs/cancao")
+        legacy_response = self.client.get("/artists/artista/songs/cancao")
+
+        self.assertEqual(api_response.status_code, 200)
+        self.assertEqual(legacy_response.status_code, 200)
+        self.assertEqual(api_response.json, legacy_response.json)
+        self.assertEqual(cifra.call_count, 2)
+
+    @patch("api.CifraClub.cifra")
+    def test_detail_rejects_invalid_artist_and_song_slugs(self, cifra):
+        for path in (
+            "/api/artists/Artista/songs/cancao",
+            "/api/artists/artista/songs/cancao_invalida",
+            "/artists/Artista/songs/cancao",
+            "/artists/artista/songs/cancao_invalida",
+        ):
+            with self.subTest(path=path):
+                response = self.client.get(path)
+                self.assertEqual(response.status_code, 400)
+                self.assertEqual(response.json, {"error": "Invalid artist or song slug"})
+
+        cifra.assert_not_called()
+
+    @patch("api.CifraClub.cifra")
     def test_detail_preserves_upstream_block_status(self, cifra):
         cifra.return_value = {
             "error": "Forbidden by upstream",
             "upstream_status": 403,
         }
 
-        response = self.client.get("/artists/artista/songs/cancao")
+        response = self.client.get("/api/artists/artista/songs/cancao")
 
         self.assertEqual(response.status_code, 403)
         self.assertEqual(response.json["upstream_status"], 403)
@@ -198,6 +226,24 @@ class CifraClubHttpIdentityTestCase(unittest.TestCase):
                 self.assertEqual(result.status_code, status)
                 self.assertTrue(result.json["blocked"])
                 self.assertEqual(result.json["upstream_status"], status)
+
+    @patch("cifraclub.requests.get")
+    def test_detail_rejects_cifra_when_canonical_metadata_is_missing(
+        self,
+        requests_get,
+    ):
+        response = MagicMock(
+            status_code=200,
+            text="<div class='cifra_cnt'><pre>G\\nLetra</pre></div>",
+        )
+        requests_get.return_value = response
+
+        result = self.client.get("/api/artists/artista/songs/cancao")
+
+        self.assertEqual(result.status_code, 500)
+        self.assertIn("metadados", result.json["error"].lower())
+        self.assertNotIn("name", result.json)
+        self.assertNotIn("artist", result.json)
 
     @patch("cifraclub.requests.get")
     def test_detail_classifies_http_200_captcha_without_pre_as_blocked(

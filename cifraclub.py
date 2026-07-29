@@ -81,8 +81,14 @@ class CifraClub():
                 result["upstream_body"] = response_body[:500]
             return False
 
-        result["name"] = title_elem.get_text(strip=True) if title_elem else "Título não encontrado"
-        result["artist"] = artist_elem.get_text(strip=True) if artist_elem else "Artista não encontrado"
+        title = title_elem.get_text(strip=True) if title_elem else ""
+        artist = artist_elem.get_text(strip=True) if artist_elem else ""
+        if not title or not artist:
+            result["error"] = "Metadados canônicos ausentes na página da cifra"
+            return False
+
+        result["name"] = title
+        result["artist"] = artist
         
         # Adicionando o estilo ao resultado
         result["style"] = style_elem.get_text(strip=True) if style_elem else "Geral"
@@ -106,7 +112,10 @@ class CifraClub():
             if result.get("blocked"):
                 return result
 
-            result['error'] = "Não foi possível extrair a cifra desta página sem o Selenium."
+            result.setdefault(
+                'error',
+                "Não foi possível extrair a cifra desta página sem o Selenium.",
+            )
             
         except RequestException as e:
             logger.error(f"Erro de requisição HTTP: {e}")

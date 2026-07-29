@@ -28,7 +28,40 @@ export async function searchArtists(query) {
     return payload.artists || [];
 }
 
-export function enqueueArtist(artist) {
+export async function previewArtistCatalog(artist) {
+    const response = await fetch(
+        getApiUrl(`/artists/${encodeURIComponent(artist.slug)}/catalog`),
+    );
+
+    if (!response.ok) {
+        throw new Error(`Artist catalog preview failed with status ${response.status}`);
+    }
+
+    const payload = await response.json();
+    const canonicalArtist = payload.artist;
+    if (
+        !canonicalArtist
+        || canonicalArtist.slug !== artist.slug
+        || !Number.isInteger(payload.total)
+        || payload.total < 0
+    ) {
+        throw new Error('Artist catalog preview returned an invalid total');
+    }
+
+    return {
+        ...artist,
+        id: canonicalArtist.id ?? artist.id,
+        name: canonicalArtist.name,
+        slug: canonicalArtist.slug,
+        total: payload.total,
+    };
+}
+
+export async function enqueueArtist(artist) {
+    if (!Number.isInteger(artist.total) || artist.total < 0) {
+        throw new TypeError('Artist catalog total is required before enqueueing');
+    }
+
     return callRpc('enqueue_cifraclub_import', {
         p_artist_name: artist.name,
         p_artist_slug: artist.slug,
@@ -52,6 +85,10 @@ export function cancelImportJob(id) {
 
 export function retryImportFailures(id) {
     return callRpc('retry_cifraclub_import_failures', { p_job_id: id });
+}
+
+export function resumeImportJob(id) {
+    return callRpc('resume_cifraclub_import', { p_job_id: id });
 }
 
 export function subscribeToImportJobs(callback) {

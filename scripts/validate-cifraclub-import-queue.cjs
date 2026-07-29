@@ -6,22 +6,24 @@ const dockerfile = fs.readFileSync('Dockerfile', 'utf8');
 const passenger = fs.readFileSync('passenger_wsgi.py', 'utf8');
 const apiSource = fs.readFileSync('api.py', 'utf8');
 const cifraClubSource = fs.readFileSync('cifraclub.py', 'utf8');
+const envExample = fs.readFileSync('.env.example', 'utf8');
+const failures = [];
 
 function requirePattern(pattern, behavior) {
   if (!pattern.test(sql)) {
-    throw new Error(`Missing contract for ${behavior}`);
+    failures.push(`Missing contract for ${behavior}`);
   }
 }
 
 function requireSourcePattern(source, pattern, behavior) {
   if (!pattern.test(source)) {
-    throw new Error(`Missing production artifact contract for ${behavior}`);
+    failures.push(`Missing production artifact contract for ${behavior}`);
   }
 }
 
 function rejectSourcePattern(source, pattern, behavior) {
   if (pattern.test(source)) {
-    throw new Error(`Forbidden production artifact contract: ${behavior}`);
+    failures.push(`Forbidden production artifact contract: ${behavior}`);
   }
 }
 
@@ -63,7 +65,22 @@ requireSourcePattern(
 requireSourcePattern(
   apiSource,
   /@app\.(?:get|route)\(['"]\/artists\/<artist>\/songs\/<song>['"]\)/,
-  'the production detail route'
+  'the legacy production detail route'
+);
+requireSourcePattern(
+  apiSource,
+  /@app\.(?:get|route)\(['"]\/api\/artists\/<artist>\/songs\/<song>['"]\)/,
+  'the production detail route below /api'
+);
+requireSourcePattern(
+  apiSource,
+  /if not [^\n]*slug[^\n]*:\s*return jsonify\(\{"error": "Invalid artist or song slug"\}\), 400/s,
+  'artist and song slug validation before detail fetch'
+);
+requireSourcePattern(
+  envExample,
+  /^CIFRA_DETAIL_API_URL=http:\/\/localhost:3000\/api$/m,
+  'the detail API base using the unified /api prefix'
 );
 rejectSourcePattern(
   `${apiSource}\n${cifraClubSource}`,
@@ -121,6 +138,34 @@ requirePattern(
   /perform pg_advisory_xact_lock[\s\S]*update public\.cifraclub_import_items\s+set status = 'pending'[\s\S]*where status = 'processing'\s+and lease_until < now\(\)[\s\S]*select exists \(/,
   'expired global processing items recovered before the active-item check'
 );
+
+const claimFunction = sql.match(
+  /create or replace function public\.claim_cifraclub_import_work\([\s\S]*?(?=create or replace function public\.finish_cifraclub_import_item\()/
+)?.[0];
+if (!claimFunction) {
+  failures.push('Missing claim_cifraclub_import_work function body');
+} else {
+  rejectSourcePattern(
+    claimFunction,
+    /where[\s\S]{0,500}next_run_at <= now\(\)[\s\S]{0,200}order by created_at/,
+    'FIFO cannot filter readiness before selecting the oldest job'
+  );
+  requireSourcePattern(
+    claimFunction,
+    /order by created_at, id\s+for update\s+limit 1;[\s\S]*if selected_job\.next_run_at > now\(\) then\s+return;/,
+    'the oldest job blocks newer jobs until its next_run_at'
+  );
+  rejectSourcePattern(
+    claimFunction,
+    /from public\.cifraclub_import_jobs[\s\S]{0,500}for update skip locked/,
+    'strict FIFO cannot skip a locked oldest job'
+  );
+  requireSourcePattern(
+    claimFunction,
+    /status = 'paused'[\s\S]{0,200}blocked_count > 0[\s\S]{0,200}blocked_count < blocked_retry_limit/,
+    'automatically paused jobs remain FIFO-eligible below the block limit'
+  );
+}
 
 requirePattern(
   /check \(status = 'imported' or song_id is null\)/,
@@ -184,6 +229,10 @@ requirePattern(
   'blocked upstream pause handling'
 );
 requirePattern(
+  /blocked_retry_limit integer not null default 3 check \(blocked_retry_limit > 0\)/,
+  'a configurable repeated-block limit stored with each job'
+);
+requirePattern(
   /pause_cifraclub_import_job\([\s\S]*p_next_run_at timestamptz[\s\S]*blocked_count = blocked_count \+ 1[\s\S]*next_run_at = p_next_run_at/,
   'pause backoff and repeated-block accounting'
 );
@@ -198,6 +247,14 @@ requirePattern(
 requirePattern(
   /create or replace function public\.resume_cifraclub_import\(/,
   'an explicit paused-job resume path'
+);
+requirePattern(
+  /resume_cifraclub_import\([\s\S]*blocked_count = 0/,
+  'manual resume resets the repeated-block budget'
+);
+requirePattern(
+  /p_estimated_total is null[\s\S]{0,200}raise exception 'invalid estimated total'/,
+  'enqueue requires a catalog-preview total'
 );
 
 requirePattern(
@@ -245,9 +302,21 @@ requirePattern(
   /net\.http_post\(/,
   'the cron HTTP invocation'
 );
+const pgNetTimeout = Number(
+  sql.match(/timeout_milliseconds\s*:=\s*(\d+)/)?.[1] ?? 0
+);
+if (pgNetTimeout <= 20_000 || pgNetTimeout >= 120_000) {
+  failures.push(
+    'pg_net timeout must exceed the 20s upstream call and remain below the 120s lease'
+  );
+}
 requirePattern(
   /'x-worker-secret', worker_secret/,
   'the Vault secret sent in the worker header'
 );
+
+if (failures.length > 0) {
+  throw new Error(failures.join('\n'));
+}
 
 console.log('cifraclub import queue static validation: PASS');

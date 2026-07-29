@@ -4,9 +4,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const queue = vi.hoisted(() => ({
     searchArtists: vi.fn(),
+    previewArtistCatalog: vi.fn(),
     enqueueArtist: vi.fn(),
     listImportJobs: vi.fn(),
     cancelImportJob: vi.fn(),
+    resumeImportJob: vi.fn(),
     retryImportFailures: vi.fn(),
     subscribeToImportJobs: vi.fn(),
 }));
@@ -25,6 +27,7 @@ const jobs = [
         skipped_count: 0,
         failed_count: 0,
         created_at: '2026-07-28T17:00:00.000Z',
+        updated_at: '2026-07-28T17:05:00.000Z',
     },
     {
         id: 'job-errors',
@@ -36,6 +39,17 @@ const jobs = [
         failed_count: 2,
         last_error: 'Cifra indisponível',
         created_at: '2026-07-28T16:00:00.000Z',
+        updated_at: '2026-07-28T16:10:00.000Z',
+        items: [
+            {
+                id: 'item-failed',
+                song_name: 'Preciso de Ti',
+                status: 'failed',
+                attempts: 3,
+                last_error: 'Resposta inválida do provedor',
+                updated_at: '2026-07-28T16:12:00.000Z',
+            },
+        ],
     },
     {
         id: 'job-pending',
@@ -46,6 +60,7 @@ const jobs = [
         skipped_count: 0,
         failed_count: 0,
         created_at: '2026-07-28T11:00:00.000Z',
+        updated_at: '2026-07-28T11:00:00.000Z',
     },
     {
         id: 'job-paused',
@@ -58,6 +73,19 @@ const jobs = [
         last_error: 'Aguardando nova tentativa do provedor',
         next_run_at: '2026-07-30T14:45:00.000Z',
         created_at: '2026-07-28T10:00:00.000Z',
+        updated_at: '2026-07-28T10:30:00.000Z',
+        blocked_count: 1,
+        blocked_retry_limit: 3,
+        items: [
+            {
+                id: 'item-blocked',
+                song_name: 'Me Atraiu',
+                status: 'pending',
+                attempts: 2,
+                last_error: 'HTTP 429 do provedor',
+                updated_at: '2026-07-28T10:30:00.000Z',
+            },
+        ],
     },
     {
         id: 'job-processing',
@@ -68,6 +96,22 @@ const jobs = [
         skipped_count: 2,
         failed_count: 1,
         created_at: '2026-07-28T09:00:00.000Z',
+        updated_at: '2026-07-28T12:00:00.000Z',
+    },
+    {
+        id: 'job-paused-limit',
+        artist_name: 'Voz da Verdade',
+        status: 'paused',
+        total_count: 12,
+        imported_count: 2,
+        skipped_count: 0,
+        failed_count: 0,
+        blocked_count: 3,
+        blocked_retry_limit: 3,
+        last_error: 'Limite de bloqueios atingido',
+        next_run_at: '2026-07-31T14:45:00.000Z',
+        created_at: '2026-07-28T08:00:00.000Z',
+        updated_at: '2026-07-28T13:00:00.000Z',
     },
 ];
 
@@ -85,10 +129,17 @@ describe('AdminCifraclubImportPage', () => {
         vi.clearAllMocks();
         queue.listImportJobs.mockResolvedValue(jobs);
         queue.searchArtists.mockResolvedValue([
-            { name: 'Fernandinho', slug: 'fernandinho', total: 154 },
+            { id: 10, name: 'Fernandinho', slug: 'fernandinho' },
         ]);
+        queue.previewArtistCatalog.mockResolvedValue({
+            id: 10,
+            name: 'Fernandinho',
+            slug: 'fernandinho',
+            total: 154,
+        });
         queue.enqueueArtist.mockResolvedValue({ id: 'new-job' });
         queue.cancelImportJob.mockResolvedValue({ id: 'job-pending', status: 'cancelled' });
+        queue.resumeImportJob.mockResolvedValue({ id: 'job-paused-limit', status: 'processing' });
         queue.retryImportFailures.mockResolvedValue({ id: 'job-errors', status: 'pending' });
         queue.subscribeToImportJobs.mockReturnValue(vi.fn());
     });
@@ -110,6 +161,12 @@ describe('AdminCifraclubImportPage', () => {
 
         const artist = await screen.findByRole('option', { name: /fernandinho/i });
         fireEvent.click(artist);
+        expect(queue.previewArtistCatalog).toHaveBeenCalledWith({
+            id: 10,
+            name: 'Fernandinho',
+            slug: 'fernandinho',
+        });
+        await screen.findByText('154 cifras');
         fireEvent.click(addButton);
 
         await waitFor(() => {
@@ -117,12 +174,13 @@ describe('AdminCifraclubImportPage', () => {
                 name: 'Fernandinho',
                 slug: 'fernandinho',
                 total: 154,
+                id: 10,
             });
         });
         expect(searchbox).toBeEnabled();
     });
 
-    it('shows progress, paused jobs, queue order, and job errors', async () => {
+    it('shows progress, automatic and manual pauses, item errors, attempts, and last activity', async () => {
         render(<AdminCifraclubImportPage />);
 
         expect(await screen.findByText('Artista em execução: Fernandinho')).toBeInTheDocument();
@@ -132,12 +190,25 @@ describe('AdminCifraclubImportPage', () => {
         expect(within(processingJob).getByText('2 ignoradas')).toBeInTheDocument();
         expect(within(processingJob).getByText('1 falha')).toBeInTheDocument();
         expect(within(processingJob).getByText('Ordem 1')).toBeInTheDocument();
-        expect(screen.getByText('Pausada')).toBeInTheDocument();
+        expect(screen.getAllByText('Pausada')).toHaveLength(2);
         expect(screen.getByText('Cifra indisponível')).toBeInTheDocument();
         const pausedJob = screen.getByRole('heading', { name: 'Gabriela Rocha' }).closest('article');
         expect(within(pausedJob).getByText('4 de 20')).toBeInTheDocument();
-        expect(within(pausedJob).getByText(/Próxima tentativa: 30\/07\/2026/)).toBeInTheDocument();
-        expect(within(pausedJob).queryByText(/^Ordem/)).not.toBeInTheDocument();
+        expect(within(pausedJob).getByText(/Nova tentativa automática: 30\/07\/2026/)).toBeInTheDocument();
+        expect(within(pausedJob).getByText('Me Atraiu')).toBeInTheDocument();
+        expect(within(pausedJob).getByText('2 tentativas')).toBeInTheDocument();
+        expect(within(pausedJob).getByText('HTTP 429 do provedor')).toBeInTheDocument();
+        expect(within(pausedJob).getByText('Ordem 2')).toBeInTheDocument();
+
+        const failedJob = screen.getByRole('heading', { name: 'Diante do Trono' }).closest('article');
+        expect(within(failedJob).getByText('Preciso de Ti')).toBeInTheDocument();
+        expect(within(failedJob).getByText('3 tentativas')).toBeInTheDocument();
+        expect(within(failedJob).getByText('Resposta inválida do provedor')).toBeInTheDocument();
+        expect(within(failedJob).getByText(/Última atividade: 28\/07\/2026/)).toBeInTheDocument();
+
+        const manuallyPausedJob = screen.getByRole('heading', { name: 'Voz da Verdade' }).closest('article');
+        expect(within(manuallyPausedJob).getByText(/Retomada manual necessária/)).toBeInTheDocument();
+        expect(within(manuallyPausedJob).queryByText(/Nova tentativa automática/)).not.toBeInTheDocument();
     });
 
     it('keeps the latest artist results when earlier searches resolve last', async () => {
@@ -167,12 +238,12 @@ describe('AdminCifraclubImportPage', () => {
         expect(queue.searchArtists).toHaveBeenNthCalledWith(2, 'Oficina G3');
 
         await act(async () => {
-            secondSearch.resolve([{ name: 'Oficina G3', slug: 'oficina-g3', total: 80 }]);
+            secondSearch.resolve([{ id: 11, name: 'Oficina G3', slug: 'oficina-g3' }]);
         });
         expect(await screen.findByRole('option', { name: /oficina g3/i })).toBeInTheDocument();
 
         await act(async () => {
-            firstSearch.resolve([{ name: 'Fernandinho', slug: 'fernandinho', total: 154 }]);
+            firstSearch.resolve([{ id: 10, name: 'Fernandinho', slug: 'fernandinho' }]);
         });
         expect(screen.getByRole('option', { name: /oficina g3/i })).toBeInTheDocument();
         expect(screen.queryByRole('option', { name: /fernandinho/i })).not.toBeInTheDocument();
@@ -215,14 +286,15 @@ describe('AdminCifraclubImportPage', () => {
         await screen.findByRole('heading', { name: 'Fernandinho' });
         expect(screen.getAllByRole('heading', { level: 3 }).map((heading) => heading.textContent)).toEqual([
             'Fernandinho',
+            'Gabriela Rocha',
             'Gabriel Guedes',
             'Aline Barros',
             'Diante do Trono',
-            'Gabriela Rocha',
+            'Voz da Verdade',
         ]);
     });
 
-    it('allows cancelling only pending jobs and retrying only completed jobs with errors', async () => {
+    it('allows cancelling pending jobs, retrying failures, and resuming a hard pause', async () => {
         render(<AdminCifraclubImportPage />);
 
         const cancelButton = await screen.findByRole('button', {
@@ -247,6 +319,18 @@ describe('AdminCifraclubImportPage', () => {
         });
         expect(screen.queryByRole('button', {
             name: 'Tentar novamente Aline Barros',
+        })).not.toBeInTheDocument();
+
+        const resumeButton = screen.getByRole('button', {
+            name: 'Retomar importação de Voz da Verdade',
+        });
+        fireEvent.click(resumeButton);
+
+        await waitFor(() => {
+            expect(queue.resumeImportJob).toHaveBeenCalledWith('job-paused-limit');
+        });
+        expect(screen.queryByRole('button', {
+            name: 'Retomar importação de Gabriela Rocha',
         })).not.toBeInTheDocument();
     });
 

@@ -17,6 +17,7 @@ create table public.cifraclub_import_jobs (
   skipped_count integer not null default 0 check (skipped_count >= 0),
   failed_count integer not null default 0 check (failed_count >= 0),
   blocked_count integer not null default 0 check (blocked_count >= 0),
+  blocked_retry_limit integer not null default 3 check (blocked_retry_limit > 0),
   discovery_attempts integer not null default 0 check (discovery_attempts >= 0),
   next_run_at timestamptz not null default now(),
   lease_until timestamptz,
@@ -150,6 +151,10 @@ begin
     raise exception 'invalid artist';
   end if;
 
+  if p_estimated_total is null or p_estimated_total < 0 then
+    raise exception 'invalid estimated total';
+  end if;
+
   insert into public.cifraclub_import_jobs (
     artist_name,
     artist_slug,
@@ -267,6 +272,7 @@ begin
 
   update public.cifraclub_import_jobs
   set status = case when has_items then 'processing' else 'pending' end,
+      blocked_count = 0,
       next_run_at = now(),
       lease_until = null,
       claim_token = null,
@@ -353,14 +359,24 @@ begin
 
   select * into selected_job
   from public.cifraclub_import_jobs
-  where status in ('pending', 'discovering', 'processing')
-    and next_run_at <= now()
+  where (
+      status in ('pending', 'discovering', 'processing')
+      or (
+        status = 'paused'
+        and blocked_count > 0
+        and blocked_count < blocked_retry_limit
+      )
+    )
     and (lease_until is null or lease_until < now())
-  order by created_at
-  for update skip locked
+  order by created_at, id
+  for update
   limit 1;
 
   if selected_job.id is null then
+    return;
+  end if;
+
+  if selected_job.next_run_at > now() then
     return;
   end if;
 
@@ -1062,7 +1078,8 @@ begin
       'content-type', 'application/json',
       'x-worker-secret', worker_secret
     ),
-    body := '{}'::jsonb
+    body := '{}'::jsonb,
+    timeout_milliseconds := 90000
   ) into request_id;
 
   return request_id;
