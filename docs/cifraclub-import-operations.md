@@ -6,8 +6,14 @@ A fila importa uma cifra por vez para cada trabalho persistido em
 `cifraclub_import_jobs` e `cifraclub_import_items`. O agendador tenta executar
 o worker uma vez por minuto; o worker reivindica no maximo um item e agenda a
 proxima tentativa entre 30 e 60 segundos. Um `403`, `429`, CAPTCHA ou desafio
-equivalente pausa o trabalho. Nao use proxies, rotacao de IP, sessoes falsas ou
-solucoes de CAPTCHA.
+equivalente pausa o trabalho com espera progressiva. Os dois primeiros
+bloqueios retomam automaticamente; o terceiro exige inspecao e retomada por um
+super administrador. Nao use proxies, rotacao de IP, sessoes falsas ou solucoes
+de CAPTCHA.
+
+O artista ativo preserva FIFO estrito: enquanto seu `next_run_at` estiver no
+futuro, nenhum artista mais novo e processado. Uma pausa que atingiu o limite
+ou foi feita manualmente sai da fila ativa ate uma retomada administrativa.
 
 O worker nunca deve ser usado para importar um catalogo real como teste de
 fumaca. Use os testes locais e as consultas de verificacao abaixo; qualquer
@@ -22,7 +28,7 @@ arquivos locais ignorados ou nos segredos da plataforma.
 | --- | --- | --- |
 | `VITE_CIFRA_API_URL` | Ambiente do build Vite | Base publica do navegador, incluindo `/api`. |
 | `CIFRA_CATALOG_API_URL` | Segredo da Edge Function | Base da API de catalogo, incluindo `/api`. |
-| `CIFRA_DETAIL_API_URL` | Segredo da Edge Function | Base da API de cifras individuais, sem `/api`. |
+| `CIFRA_DETAIL_API_URL` | Segredo da Edge Function | Base da API de cifras individuais, incluindo `/api`. |
 | `SUPABASE_URL` | Ambiente gerenciado da Edge Function | URL do projeto Supabase. |
 | `SUPABASE_SERVICE_ROLE_KEY` | Ambiente gerenciado da Edge Function | Credencial do worker; nunca definir com prefixo `VITE_` ou registrar em logs. |
 
@@ -32,7 +38,7 @@ alvo. Substitua os exemplos pelos enderecos reais, sem incluir tokens:
 ```bash
 supabase secrets set \
   CIFRA_CATALOG_API_URL=https://api.example.com/api \
-  CIFRA_DETAIL_API_URL=https://api.example.com
+  CIFRA_DETAIL_API_URL=https://api.example.com/api
 ```
 
 A migracao cria no Vault o segredo interno
@@ -108,7 +114,8 @@ select
   item.updated_at
 from public.cifraclub_import_items as item
 join public.cifraclub_import_jobs as job on job.id = item.job_id
-where item.status in ('failed', 'processing')
+where item.last_error is not null
+   or item.status in ('failed', 'processing')
 order by item.updated_at desc;
 ```
 
@@ -119,11 +126,16 @@ duplicatas e nao devem ser reenviados.
 
 ## Pausa e retomada operacional
 
-Um bloqueio upstream pausa automaticamente o trabalho. Para interromper um
-trabalho manualmente, execute o bloco inteiro no SQL Editor como administrador
-do banco. Nao o execute pelo cliente da aplicacao: a RLS bloqueia escrita
-direta e a transacao precisa manter a ordem abaixo. Registre o motivo no ticket
-operacional.
+Um bloqueio upstream incrementa `blocked_count`, libera a reivindicacao com
+fencing e pausa o trabalho ate `next_run_at`. Enquanto
+`blocked_count < blocked_retry_limit`, o mesmo artista retoma automaticamente
+com espera progressiva e continua bloqueando artistas mais novos. Ao atingir o
+limite padrao de 3, o trabalho permanece pausado para inspecao.
+
+Para interromper um trabalho manualmente, execute o bloco inteiro no SQL Editor
+como administrador do banco. Nao o execute pelo cliente da aplicacao: a RLS
+bloqueia escrita direta e a transacao precisa manter a ordem abaixo. Registre o
+motivo no ticket operacional.
 
 ```sql
 begin;
@@ -145,6 +157,7 @@ set
   status = 'paused',
   lease_until = null,
   claim_token = null,
+  blocked_count = 0,
   next_run_at = now(),
   last_error = 'Pausado manualmente: <motivo>',
   updated_at = now()
@@ -159,21 +172,23 @@ atualizacoes em comandos independentes. Se houver um worker obsoleto, o
 `claim_token` e o `lease_until` limpos no item fazem as RPCs de finalizacao e
 importacao rejeitarem a reivindicacao antiga.
 
-Nao retome automaticamente um trabalho pausado por bloqueio. Primeiro confirme
-que a causa foi resolvida e que retomar esta de acordo com os limites do
-upstream. A funcao `resume_cifraclub_import` existe para uma retomada
-autorizada por super administrador; a interface atual nao expoe esse comando,
-portanto o controlador deve executar a retomada somente por um fluxo
-autenticado que preserve `auth.uid()`.
+Pausas abaixo do limite retomam automaticamente na data exibida pelo painel.
+Pausas manuais e pausas que atingiram o limite mostram "Retomada manual
+necessaria". Depois de confirmar que a causa foi resolvida e que a retomada
+respeita os limites do upstream, um super administrador pode usar a acao
+`Retomar` do painel. Ela chama `resume_cifraclub_import`, zera o contador de
+bloqueios e preserva os itens ja concluidos.
 
 ## Ajuste de cadencia
 
 A configuracao atual e deliberadamente conservadora:
 
 - cron: uma chamada por minuto;
+- timeout HTTP do `pg_net`: 90 segundos;
 - lease do worker: 120 segundos;
 - intervalo normal: 30 a 60 segundos;
 - espera temporaria: progressiva por tentativa;
+- bloqueios: duas retomadas automaticas; pausa manual no terceiro;
 - processamento: um unico item global por vez.
 
 Esses valores ainda vivem no codigo e na migracao, nao em uma variavel de
