@@ -1,4 +1,19 @@
 import { supabase } from '../supabaseClient';
+import { createClient } from '@supabase/supabase-js';
+import { getAuthRedirectUrl } from '../utils/authRedirect';
+
+const createEphemeralSupabaseClient = () => createClient(
+    import.meta.env.VITE_SUPABASE_URL,
+    import.meta.env.VITE_SUPABASE_ANON_KEY,
+    {
+        auth: {
+            persistSession: false,
+            autoRefreshToken: false,
+            detectSessionInUrl: false,
+            flowType: 'implicit'
+        }
+    }
+);
 
 export const InvitationService = {
     /**
@@ -96,7 +111,29 @@ export const InvitationService = {
             .single();
 
         if (error) throw error;
-        
+
+        const emailClient = createEphemeralSupabaseClient();
+        const { error: emailError } = await emailClient.auth.signInWithOtp({
+            email: data.email,
+            options: {
+                shouldCreateUser: true,
+                emailRedirectTo: getAuthRedirectUrl(`/join/${data.token}`),
+                data: {
+                    invitation_token: data.token,
+                    church_id: churchId,
+                    role
+                }
+            }
+        });
+
+        if (emailError) {
+            await supabase
+                .from('invitations')
+                .update({ status: 'canceled' })
+                .eq('id', data.id);
+            throw new Error(`Convite criado, mas o email não foi disparado: ${emailError.message}`);
+        }
+
         return data;
     },
 

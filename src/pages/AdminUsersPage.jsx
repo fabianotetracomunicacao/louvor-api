@@ -9,6 +9,7 @@ import { UserEditModal } from '../components/UserEditModal';
 import { SubscriptionManagerModal } from '../components/SubscriptionManagerModal';
 import UserActivityModal from '../components/UserActivityModal';
 import { getInstruments } from '../utils/storage';
+import { getAuthRedirectUrl } from '../utils/authRedirect';
 
 function ButtonLink({ to, icon, label }) {
     return (
@@ -174,7 +175,7 @@ export function AdminUsersPage() {
                 email: newUserEmail,
                 password: newUserPassword,
                 options: {
-                    emailRedirectTo: 'http://localhost:5173',
+                    emailRedirectTo: getAuthRedirectUrl('/confirm-email'),
                     data: {
                         full_name: newUserName,
                         phone_number: newUserPhone,

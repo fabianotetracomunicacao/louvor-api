@@ -12,6 +12,7 @@ import { Link } from 'react-router-dom';
 import { AsaasService } from '../services/AsaasService';
 import { SubscriptionManagerModal } from '../components/SubscriptionManagerModal';
 import { getAppSetting, setAppSetting } from '../utils/storage';
+import { getAuthRedirectUrl } from '../utils/authRedirect';
 
 export function SuperAdminChurchesPage() {
     const { isSuperAdmin } = useAuth();
@@ -107,7 +108,7 @@ export function SuperAdminChurchesPage() {
                 password: passwordToUse,
                 options: {
                     emailRedirectTo: addUserState.mode === 'invite' 
-                        ? `${window.location.origin}/completar-cadastro`
+                        ? getAuthRedirectUrl('/completar-cadastro')
                         : undefined,
                     data: {
                         full_name: newUserName,

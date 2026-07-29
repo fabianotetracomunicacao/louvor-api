@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { supabase } from '../supabaseClient';
 import { logActivity } from '../utils/storage';
+import { getAuthRedirectUrl } from '../utils/authRedirect';
 
 const AuthContext = createContext({});
 
@@ -201,7 +202,7 @@ export function AuthProvider({ children }) {
             email,
             password,
             options: {
-                emailRedirectTo: `${import.meta.env.VITE_SITE_URL || window.location.origin}/confirm-email`,
+                emailRedirectTo: getAuthRedirectUrl('/confirm-email'),
                 data: {
                     email: email,
                     ...userData
@@ -229,7 +230,7 @@ export function AuthProvider({ children }) {
 
     const resetPassword = async (email) => {
         const { error } = await supabase.auth.resetPasswordForEmail(email, {
-            redirectTo: `${import.meta.env.VITE_SITE_URL || window.location.origin}/update-password`,
+            redirectTo: getAuthRedirectUrl('/update-password'),
         });
         if (error) throw error;
     };

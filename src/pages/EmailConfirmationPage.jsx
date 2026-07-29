@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
 import { CheckCircle, XCircle, Loader2 } from 'lucide-react';
+import { exchangeAuthRedirectFromUrl } from '../utils/authRedirect';
 
 export function EmailConfirmationPage() {
     const [searchParams] = useSearchParams();
@@ -13,24 +14,29 @@ export function EmailConfirmationPage() {
     useEffect(() => {
         const confirmEmail = async () => {
             try {
-                // Get token from URL
-                const token = searchParams.get('token');
-                const type = searchParams.get('type');
+                const hasAuthParams = searchParams.get('code') || searchParams.get('token_hash') || searchParams.get('token');
 
-                if (!token) {
+                let exchangeError = null;
+                if (hasAuthParams) {
+                    const result = await exchangeAuthRedirectFromUrl(supabase);
+                    exchangeError = result.error;
+                    if (exchangeError) {
+                        console.warn('Confirmation exchange error:', exchangeError);
+                    }
+                }
+
+                const { data: { session }, error } = await supabase.auth.getSession();
+
+                if (!hasAuthParams && !session) {
                     setStatus('error');
                     setMessage('Link de confirmação inválido ou expirado.');
                     return;
                 }
 
-                // Supabase handles the confirmation automatically via the URL
-                // We just need to check if the user is now authenticated
-                const { data: { session }, error } = await supabase.auth.getSession();
-
-                if (error) {
+                if (error || (exchangeError && !session)) {
                     setStatus('error');
                     setMessage('Erro ao confirmar email. Tente novamente.');
-                    console.error('Confirmation error:', error);
+                    console.error('Confirmation error:', error || exchangeError);
                     return;
                 }
 

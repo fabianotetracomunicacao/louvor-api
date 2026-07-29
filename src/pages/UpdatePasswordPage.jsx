@@ -3,6 +3,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { Lock, ArrowRight, Loader, Eye, EyeOff, CheckCircle2 } from 'lucide-react';
 import { supabase } from '../supabaseClient';
+import { exchangeAuthRedirectFromUrl } from '../utils/authRedirect';
 
 export function UpdatePasswordPage() {
     const { updatePassword } = useAuth();
@@ -18,6 +19,10 @@ export function UpdatePasswordPage() {
     // Ensure session is active (Supabase handles recovery session automatically if clicking from email)
     useEffect(() => {
         const checkSession = async () => {
+            const exchange = await exchangeAuthRedirectFromUrl(supabase);
+            if (exchange.error) {
+                console.warn('Password recovery exchange error:', exchange.error);
+            }
             const { data: { session } } = await supabase.auth.getSession();
             if (!session) {
                 // If no session, it might be an invalid or expired link
