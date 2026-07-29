@@ -2,18 +2,24 @@ import { supabase } from '../supabaseClient';
 import { createClient } from '@supabase/supabase-js';
 import { getAuthRedirectUrl } from '../utils/authRedirect';
 
-const createEphemeralSupabaseClient = () => createClient(
-    import.meta.env.VITE_SUPABASE_URL,
-    import.meta.env.VITE_SUPABASE_ANON_KEY,
-    {
-        auth: {
-            persistSession: false,
-            autoRefreshToken: false,
-            detectSessionInUrl: false,
-            flowType: 'implicit'
-        }
+let _ephemeralClient = null;
+const getEphemeralSupabaseClient = () => {
+    if (!_ephemeralClient) {
+        _ephemeralClient = createClient(
+            import.meta.env.VITE_SUPABASE_URL,
+            import.meta.env.VITE_SUPABASE_ANON_KEY,
+            {
+                auth: {
+                    persistSession: false,
+                    autoRefreshToken: false,
+                    detectSessionInUrl: false,
+                    storageKey: 'lp_invite_otp_auth'
+                }
+            }
+        );
     }
-);
+    return _ephemeralClient;
+};
 
 export const InvitationService = {
     /**
@@ -112,7 +118,7 @@ export const InvitationService = {
 
         if (error) throw error;
 
-        const emailClient = createEphemeralSupabaseClient();
+        const emailClient = getEphemeralSupabaseClient();
         const { error: emailError } = await emailClient.auth.signInWithOtp({
             email: data.email,
             options: {
@@ -165,7 +171,7 @@ export const InvitationService = {
 
         if (fetchErr || !inv) throw new Error('Convite não encontrado.');
 
-        const emailClient = createEphemeralSupabaseClient();
+        const emailClient = getEphemeralSupabaseClient();
         const { error: emailError } = await emailClient.auth.signInWithOtp({
             email: inv.email,
             options: {
