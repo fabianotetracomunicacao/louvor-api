@@ -14,6 +14,7 @@ vi.mock('../../supabaseClient', () => ({ supabase }));
 import {
     cancelImportJob,
     enqueueArtist,
+    enqueueArtistSelection,
     listImportJobs,
     previewArtistCatalog,
     resumeImportJob,
@@ -68,7 +69,46 @@ describe('cifraclub import queue client', () => {
             name: 'Oficina G3',
             slug: 'oficina-g3',
             total: 2,
+            songs: [{ song_slug: 'resposta' }, { song_slug: 'ele-vive' }],
         });
+    });
+
+    it('sends only selected song identities to the selective enqueue RPC', async () => {
+        supabase.rpc.mockResolvedValue({ data: { id: 'job-1' }, error: null });
+
+        await enqueueArtistSelection(
+            { name: 'Diante do Trono', slug: 'diante-do-trono' },
+            [
+                {
+                    name: 'A Canção',
+                    song_slug: 'a-cancao',
+                    version_tone: 'G',
+                    provider: 'cifraclub',
+                },
+            ],
+        );
+
+        expect(supabase.rpc).toHaveBeenCalledWith(
+            'enqueue_selected_cifraclub_import',
+            {
+                p_artist_name: 'Diante do Trono',
+                p_artist_slug: 'diante-do-trono',
+                p_songs: [{ name: 'A Canção', song_slug: 'a-cancao' }],
+            },
+        );
+    });
+
+    it('rejects empty or invalid selective enqueue payloads locally', async () => {
+        await expect(enqueueArtistSelection(
+            { name: 'Diante do Trono', slug: 'diante-do-trono' },
+            [],
+        )).rejects.toThrow(/seleção/i);
+        await expect(enqueueArtistSelection(
+            { name: 'Diante do Trono', slug: 'diante-do-trono' },
+            [{ name: '', song_slug: 'sem-nome' }],
+        )).rejects.toThrow(/música/i);
+
+        expect(supabase.rpc).not.toHaveBeenCalled();
     });
 
     it('sends the selected artist to the enqueue RPC', async () => {
