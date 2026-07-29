@@ -154,6 +154,53 @@ export const InvitationService = {
     },
 
     /**
+     * Resends an invitation email
+     */
+    async resendInvitation(invitationId) {
+        const { data: inv, error: fetchErr } = await supabase
+            .from('invitations')
+            .select('*')
+            .eq('id', invitationId)
+            .single();
+
+        if (fetchErr || !inv) throw new Error('Convite não encontrado.');
+
+        const emailClient = createEphemeralSupabaseClient();
+        const { error: emailError } = await emailClient.auth.signInWithOtp({
+            email: inv.email,
+            options: {
+                shouldCreateUser: true,
+                emailRedirectTo: getAuthRedirectUrl(`/join/${inv.token}`),
+                data: {
+                    invitation_token: inv.token,
+                    church_id: inv.church_id,
+                    role: inv.role
+                }
+            }
+        });
+
+        if (emailError) {
+            const isRateLimit = emailError.status === 429 ||
+                emailError.message?.toLowerCase().includes('rate limit') ||
+                emailError.message?.toLowerCase().includes('security purposes') ||
+                emailError.message?.toLowerCase().includes('too many requests') ||
+                emailError.message?.includes('429');
+
+            if (isRateLimit) {
+                const link = getAuthRedirectUrl(`/join/${inv.token}`);
+                const customErr = new Error('Limite de envio de e-mails atingido (429). O link do convite foi copiado para sua área de transferência para envio via WhatsApp!');
+                customErr.isRateLimit = true;
+                customErr.invitationLink = link;
+                throw customErr;
+            }
+
+            throw new Error(`Erro ao reenviar e-mail: ${emailError.message}`);
+        }
+
+        return inv;
+    },
+
+    /**
      * Lists invitations for a church
      */
     async listInvitations(churchId) {

@@ -7,7 +7,7 @@ import {
     Users, UserPlus, Mail, Shield, AlertCircle, 
     CheckCircle, XCircle, Clock, Trash2, Settings, 
     Activity, ArrowUpRight, Plus, RefreshCw, Loader, CreditCard,
-    Copy, Link as LinkIcon
+    Copy, Link as LinkIcon, Send
 } from 'lucide-react';
 
 export function ChurchAdminPage() {
@@ -22,11 +22,12 @@ export function ChurchAdminPage() {
         worshiper: { occupied: 0, limit: 0 }
     });
 
-    // Form State
+    // Form & Resend State
     const [isInviting, setIsInviting] = useState(false);
     const [inviteEmail, setInviteEmail] = useState('');
     const [inviteRole, setInviteRole] = useState('WORSHIPPER');
     const [sendingInvite, setSendingInvite] = useState(false);
+    const [resendingId, setResendingId] = useState(null);
 
     useEffect(() => {
         if (activeChurch) {
@@ -90,6 +91,25 @@ export function ChurchAdminPage() {
         const link = `${window.location.origin}/join/${token}`;
         navigator.clipboard.writeText(link);
         showToast('Link do convite copiado para a área de transferência!', 'success');
+    };
+
+    const handleResendInvite = async (invitationId) => {
+        setResendingId(invitationId);
+        try {
+            await InvitationService.resendInvitation(invitationId);
+            showToast('E-mail de convite reenviado com sucesso!', 'success');
+        } catch (err) {
+            if (err.isRateLimit) {
+                showToast('Limite de e-mails atingido (429). Link do convite copiado!', 'info');
+                if (err.invitationLink) {
+                    navigator.clipboard.writeText(err.invitationLink).catch(() => {});
+                }
+            } else {
+                showToast(err.message, 'error');
+            }
+        } finally {
+            setResendingId(null);
+        }
     };
 
     const handleSendInvite = async (e) => {
@@ -394,16 +414,22 @@ export function ChurchAdminPage() {
                                         <p className="text-sm font-bold text-slate-900 dark:text-white truncate pr-6">{invite.email}</p>
                                         <p className="text-[10px] font-black uppercase text-purple-500 italic">{roleLabels[invite.role]}</p>
                                     </div>
-                                    <div className="flex items-center justify-between pt-2 border-t border-slate-50 dark:border-white/5">
-                                        <span className="text-[9px] text-slate-400 flex items-center gap-1">
-                                            <Clock size={10} /> Expira em 7 dias
-                                        </span>
+                                    <div className="flex items-center justify-between pt-2 border-t border-slate-50 dark:border-white/5 gap-2">
                                         <button 
                                             onClick={() => handleCopyInviteLink(invite.token)}
-                                            className="text-[10px] font-bold text-purple-600 hover:text-purple-700 uppercase tracking-tighter flex items-center gap-1 bg-purple-50 dark:bg-purple-900/30 px-2 py-1 rounded-lg transition hover:scale-105"
+                                            className="text-[10px] font-bold text-slate-600 dark:text-slate-300 hover:text-purple-600 uppercase tracking-tighter flex items-center gap-1 bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded-lg transition hover:scale-105"
                                             title="Copiar Link do Convite"
                                         >
                                             <Copy size={11} /> Copiar Link
+                                        </button>
+                                        <button 
+                                            onClick={() => handleResendInvite(invite.id)}
+                                            disabled={resendingId === invite.id}
+                                            className="text-[10px] font-bold text-purple-600 hover:text-purple-700 uppercase tracking-tighter flex items-center gap-1 bg-purple-50 dark:bg-purple-900/30 px-2.5 py-1 rounded-lg transition hover:scale-105 disabled:opacity-50"
+                                            title="Reenviar E-mail de Convite"
+                                        >
+                                            {resendingId === invite.id ? <Loader size={11} className="animate-spin" /> : <Send size={11} />}
+                                            Reenviar
                                         </button>
                                     </div>
                                 </div>
