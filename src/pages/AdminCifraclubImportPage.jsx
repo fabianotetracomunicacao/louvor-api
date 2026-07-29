@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
     CheckCircle2,
     CirclePause,
@@ -26,12 +26,14 @@ const STATUS = {
     cancelled: { label: 'Cancelada', className: 'bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-300' },
 };
 
+const QUEUE_STATUSES = new Set(['pending', 'discovering', 'processing', 'paused']);
+
 function getErrorMessage(error, fallback) {
     return error instanceof Error && error.message ? error.message : fallback;
 }
 
 function getProgress(job) {
-    const completed = (job.imported_count || 0) + (job.skipped_count || 0) + (job.failed_count || 0);
+    const completed = getCompletedCount(job);
     const total = job.total_count || job.items?.length || 0;
 
     if (total === 0) {
@@ -39,6 +41,37 @@ function getProgress(job) {
     }
 
     return Math.min(100, Math.round((completed / total) * 100));
+}
+
+function getCompletedCount(job) {
+    return (job.imported_count || 0) + (job.skipped_count || 0) + (job.failed_count || 0);
+}
+
+function isQueuedJob(job) {
+    return QUEUE_STATUSES.has(job.status);
+}
+
+function getCreatedAt(job) {
+    const timestamp = Date.parse(job.created_at || '');
+    return Number.isNaN(timestamp) ? 0 : timestamp;
+}
+
+function sortJobsForDisplay(jobs) {
+    const queuedJobs = jobs.filter(isQueuedJob).sort((left, right) => getCreatedAt(left) - getCreatedAt(right));
+    const historicalJobs = jobs.filter((job) => !isQueuedJob(job)).sort((left, right) => getCreatedAt(right) - getCreatedAt(left));
+
+    return [...queuedJobs, ...historicalJobs];
+}
+
+function formatNextRunAt(nextRunAt) {
+    const date = new Date(nextRunAt);
+
+    if (!nextRunAt || Number.isNaN(date.getTime())) return 'não agendada';
+
+    return date.toLocaleString('pt-BR', {
+        dateStyle: 'short',
+        timeStyle: 'short',
+    });
 }
 
 function JobStatus({ status }) {
@@ -69,49 +102,54 @@ export function AdminCifraclubImportPage() {
     const [actionJobId, setActionJobId] = useState(null);
     const [searchError, setSearchError] = useState('');
     const [queueError, setQueueError] = useState('');
+    const searchRequestId = useRef(0);
+    const refreshRequestId = useRef(0);
+    const isMounted = useRef(false);
+
+    const displayedJobs = useMemo(() => sortJobsForDisplay(jobs), [jobs]);
 
     const activeJob = useMemo(
         () => jobs.find((job) => job.status === 'discovering' || job.status === 'processing'),
         [jobs],
     );
 
-    const refreshJobs = async () => {
+    const refreshJobs = useCallback(async () => {
+        const requestId = ++refreshRequestId.current;
+
         try {
             const nextJobs = await listImportJobs();
+            if (!isMounted.current || requestId !== refreshRequestId.current) return;
+
             setJobs(nextJobs);
             setQueueError('');
         } catch (error) {
+            if (!isMounted.current || requestId !== refreshRequestId.current) return;
+
             setQueueError(getErrorMessage(error, 'Não foi possível atualizar a fila de importação.'));
         }
-    };
+    }, []);
 
     useEffect(() => {
-        let isMounted = true;
-
-        const refreshWhileMounted = async () => {
-            try {
-                const nextJobs = await listImportJobs();
-                if (isMounted) {
-                    setJobs(nextJobs);
-                    setQueueError('');
-                }
-            } catch (error) {
-                if (isMounted) {
-                    setQueueError(getErrorMessage(error, 'Não foi possível atualizar a fila de importação.'));
-                }
-            }
-        };
-
-        void refreshWhileMounted();
-        const unsubscribe = subscribeToImportJobs(() => void refreshWhileMounted());
-        const pollId = window.setInterval(() => void refreshWhileMounted(), 30_000);
+        isMounted.current = true;
+        void refreshJobs();
+        const unsubscribe = subscribeToImportJobs(() => void refreshJobs());
+        const pollId = window.setInterval(() => void refreshJobs(), 30_000);
 
         return () => {
-            isMounted = false;
+            isMounted.current = false;
             window.clearInterval(pollId);
             unsubscribe?.();
         };
-    }, []);
+    }, [refreshJobs]);
+
+    const handleQueryChange = (event) => {
+        searchRequestId.current += 1;
+        setQuery(event.target.value);
+        setArtists([]);
+        setSelectedArtist(null);
+        setSearchError('');
+        setIsSearching(false);
+    };
 
     const handleSearch = async (event) => {
         event.preventDefault();
@@ -119,17 +157,25 @@ export function AdminCifraclubImportPage() {
 
         if (!normalizedQuery) return;
 
-        setIsSearching(true);
+        const requestId = ++searchRequestId.current;
         setSearchError('');
         setSelectedArtist(null);
+        setIsSearching(true);
 
         try {
-            setArtists(await searchArtists(normalizedQuery));
+            const foundArtists = await searchArtists(normalizedQuery);
+            if (requestId !== searchRequestId.current) return;
+
+            setArtists(foundArtists);
         } catch (error) {
+            if (requestId !== searchRequestId.current) return;
+
             setArtists([]);
             setSearchError(getErrorMessage(error, 'Não foi possível buscar artistas.'));
         } finally {
-            setIsSearching(false);
+            if (requestId === searchRequestId.current) {
+                setIsSearching(false);
+            }
         }
     };
 
@@ -199,14 +245,14 @@ export function AdminCifraclubImportPage() {
                             role="searchbox"
                             aria-label="Buscar artista"
                             value={query}
-                            onChange={(event) => setQuery(event.target.value)}
+                            onChange={handleQueryChange}
                             placeholder="Ex.: Fernandinho"
                             className="h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-slate-900 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
                         />
                     </label>
                     <button
                         type="submit"
-                        disabled={isSearching || !query.trim()}
+                        disabled={!query.trim()}
                         className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-indigo-600 px-3 text-sm font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                         <Search size={17} aria-hidden="true" />
@@ -267,9 +313,11 @@ export function AdminCifraclubImportPage() {
                     <p className="border border-dashed border-slate-300 px-4 py-8 text-center text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">Nenhum artista na fila.</p>
                 ) : (
                     <div className="space-y-2">
-                        {jobs.map((job, index) => {
+                        {displayedJobs.map((job, index) => {
                             const progress = getProgress(job);
+                            const completedCount = getCompletedCount(job);
                             const isPending = job.status === 'pending';
+                            const isQueued = isQueuedJob(job);
                             const canRetry = job.status === 'completed_with_errors';
                             const isActing = actionJobId === job.id;
 
@@ -280,9 +328,10 @@ export function AdminCifraclubImportPage() {
                                             <div className="flex flex-wrap items-center gap-2">
                                                 <h3 className="font-semibold text-slate-900 dark:text-white">{job.artist_name}</h3>
                                                 <JobStatus status={job.status} />
-                                                <span className="text-xs text-slate-500 dark:text-slate-400">Ordem {index + 1}</span>
+                                                {isQueued && <span className="text-xs text-slate-500 dark:text-slate-400">Ordem {index + 1}</span>}
                                             </div>
                                             {job.last_error && <p className="mt-2 text-sm text-rose-600 dark:text-rose-400">{job.last_error}</p>}
+                                            {job.status === 'paused' && <p className="mt-2 text-sm text-amber-700 dark:text-amber-300">Próxima tentativa: {formatNextRunAt(job.next_run_at)}</p>}
                                         </div>
 
                                         <div className="flex shrink-0 items-center gap-2">
@@ -324,6 +373,7 @@ export function AdminCifraclubImportPage() {
                                                 <span>{job.imported_count || 0} importadas</span>
                                                 <span>{job.skipped_count || 0} ignoradas</span>
                                                 <span>{job.failed_count || 0} {(job.failed_count || 0) === 1 ? 'falha' : 'falhas'}</span>
+                                                <span>{completedCount} de {job.total_count || 0}</span>
                                             </div>
                                         </div>
                                         <span className="text-right text-sm font-semibold tabular-nums text-slate-700 dark:text-slate-200">{progress}%</span>
