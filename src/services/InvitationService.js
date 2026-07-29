@@ -170,19 +170,35 @@ export const InvitationService = {
      * Gets invitation details by token
      */
     async getInvitationMetadata(token) {
+        // Try RPC first (SECURITY DEFINER, bypasses RLS restrictions)
+        try {
+            const { data: rpcData, error: rpcError } = await supabase
+                .rpc('get_invitation_by_token', { p_token: token });
+
+            if (!rpcError && rpcData) {
+                return rpcData;
+            }
+        } catch (e) {
+            console.warn('[InvitationService] RPC get_invitation_by_token fallback:', e);
+        }
+
+        // Direct query fallback
         const { data, error } = await supabase
             .from('invitations')
             .select(`
                 *,
                 church: churches(name),
-                invited_by: profiles!invited_by_user_id(full_name)
+                invited_by: profiles!invited_by_user_id(full_name, name)
             `)
             .eq('token', token)
             .eq('status', 'pending')
             .single();
 
-        if (error) throw new Error('Convite inválido, expirado ou já utilizado.');
-        
+        if (error || !data) {
+            console.error('[InvitationService] Error fetching invitation:', error);
+            throw new Error('Convite inválido, expirado ou já utilizado.');
+        }
+
         // Check expiry manually
         if (new Date(data.expires_at) < new Date()) {
             throw new Error('Este convite expirou.');
@@ -200,6 +216,18 @@ export const InvitationService = {
         // Validate user email against invited email if provided
         if (invite.email && userEmail && invite.email.toLowerCase().trim() !== userEmail.toLowerCase().trim()) {
             throw new Error(`Este convite foi enviado para ${invite.email}. Faça login com esta conta para aceitá-lo.`);
+        }
+
+        // Try RPC first (SECURITY DEFINER)
+        try {
+            const { data: rpcRes, error: rpcErr } = await supabase
+                .rpc('accept_invitation_by_token', { p_token: token, p_user_id: userId });
+
+            if (!rpcErr && rpcRes?.success) {
+                return invite;
+            }
+        } catch (e) {
+            console.warn('[InvitationService] RPC accept_invitation_by_token fallback:', e);
         }
 
         // 1. Double check capacity just in case

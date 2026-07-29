@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { InvitationService } from '../services/InvitationService';
+import { exchangeAuthRedirectFromUrl } from '../utils/authRedirect';
+import { supabase } from '../supabaseClient';
 import { Shield, CheckCircle, AlertTriangle, UserPlus, LogIn, Loader } from 'lucide-react';
 
 export function InvitationAcceptPage() {
@@ -15,22 +17,25 @@ export function InvitationAcceptPage() {
     const [error, setError] = useState('');
 
     useEffect(() => {
-        loadInvitation();
-    }, [token]);
+        const handleAuthAndLoad = async () => {
+            setLoading(true);
+            setError('');
+            try {
+                // Exchange auth code or token in URL if user clicked magic link email
+                await exchangeAuthRedirectFromUrl(supabase).catch(e => console.warn('[InvitationAccept] Auth exchange info:', e));
 
-    const loadInvitation = async () => {
-        setLoading(true);
-        setError('');
-        try {
-            const data = await InvitationService.getInvitationMetadata(token);
-            setInvitation(data);
-        } catch (err) {
-            console.error(err);
-            setError(err.message || 'Erro ao carregar convite.');
-        } finally {
-            setLoading(false);
-        }
-    };
+                const data = await InvitationService.getInvitationMetadata(token);
+                setInvitation(data);
+            } catch (err) {
+                console.error('[InvitationAccept] Load error:', err);
+                setError(err.message || 'Erro ao carregar convite.');
+            } finally {
+                setLoading(false);
+            }
+        };
+
+        handleAuthAndLoad();
+    }, [token]);
 
     const handleAccept = async () => {
         if (!user) return;

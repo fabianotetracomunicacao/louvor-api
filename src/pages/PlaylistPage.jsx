@@ -1604,15 +1604,17 @@ export function PlaylistPage() {
                                                             <div className="flex flex-wrap gap-2">
                                                                 {setlist.scales.map(member => (
                                                                     <div key={member.id} className={`flex items-center gap-1.5 pr-2 rounded-full border shadow-2xs ${member.status === 'CONFIRMED' ? 'bg-emerald-50 dark:bg-emerald-950/30 border-emerald-300 dark:border-emerald-700/50' : member.status === 'DECLINED' ? 'bg-rose-50 dark:bg-rose-950/30 border-rose-300 dark:border-rose-700/50' : 'bg-slate-100 dark:bg-slate-700/50 border-slate-200 dark:border-slate-700/50'}`}>
-                                                                        <div className="h-6 w-6 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden shrink-0 relative">
-                                                                            {member.user?.avatar_url ? (
-                                                                                <img src={member.user.avatar_url} alt={member.user.name} className="h-full w-full object-cover" />
-                                                                            ) : (
-                                                                                <div className="h-full w-full flex items-center justify-center text-[8px] font-bold text-slate-500">
-                                                                                    {(member.user?.name || member.user?.email || '?').substring(0, 2).toUpperCase()}
-                                                                                </div>
-                                                                            )}
-                                                                            <span className={`absolute bottom-0 right-0 w-2 h-2 rounded-full ring-1 ring-white dark:ring-slate-900 ${member.status === 'CONFIRMED' ? 'bg-emerald-500' : member.status === 'DECLINED' ? 'bg-rose-500' : 'bg-amber-400'}`} title={`Status: ${member.status || 'PENDING'}`} />
+                                                                        <div className="h-6 w-6 shrink-0 relative overflow-visible">
+                                                                            <div className="h-full w-full rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden">
+                                                                                {member.user?.avatar_url ? (
+                                                                                    <img src={member.user.avatar_url} alt={member.user.name} className="h-full w-full object-cover" />
+                                                                                ) : (
+                                                                                    <div className="h-full w-full flex items-center justify-center text-[8px] font-bold text-slate-500">
+                                                                                        {(member.user?.name || member.user?.email || '?').substring(0, 2).toUpperCase()}
+                                                                                    </div>
+                                                                                )}
+                                                                            </div>
+                                                                            <span className={`absolute -bottom-0.5 -right-0.5 z-10 w-2.5 h-2.5 rounded-full ring-1 ring-white dark:ring-slate-900 ${member.status === 'CONFIRMED' ? 'bg-emerald-500' : member.status === 'DECLINED' ? 'bg-rose-500' : 'bg-amber-400'}`} title={`Status: ${member.status || 'PENDING'}`} />
                                                                         </div>
                                                                         <div className="text-xs text-slate-700 dark:text-slate-300 max-w-[130px] truncate py-1 flex items-center gap-1">
                                                                             <span className="font-bold">{member.user?.name?.split(' ')[0] || member.user?.email?.split('@')[0]}</span>

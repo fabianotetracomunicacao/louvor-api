@@ -64,7 +64,7 @@ export async function downloadSetlistForOffline(setlistId) {
         song: songs(*)
     ),
         scales: setlist_scales(
-            id, role,
+            id, role, status, whatsapp_status, confirmed_at, declined_at, decline_reason,
             user: profiles(id, name, full_name, avatar_url, email, instrument, available_instruments)
         ),
             creator: profiles!setlists_created_by_profile_fkey(
@@ -1068,6 +1068,26 @@ export async function savePlaylistMetadata(playlistData) {
 
 // --- SCALE MANAGEMENT (ESCALA) ---
 
+const normalizeScaleStatus = (item = {}) => {
+    const rawStatus = String(item.status || '').trim().toUpperCase();
+    if (rawStatus === 'CONFIRMED' || item.confirmed_at) return 'CONFIRMED';
+    if (rawStatus === 'DECLINED' || item.declined_at) return 'DECLINED';
+    return 'PENDING';
+};
+
+export function normalizeSetlistScaleItem(item = {}) {
+    return {
+        id: item.id,
+        role: item.role,
+        status: normalizeScaleStatus(item),
+        whatsappStatus: item.whatsapp_status || item.whatsappStatus || 'NOT_SENT',
+        confirmedAt: item.confirmed_at || item.confirmedAt || null,
+        declinedAt: item.declined_at || item.declinedAt || null,
+        declineReason: item.decline_reason || item.declineReason || null,
+        user: item.user
+    };
+}
+
 /**
  * Get the scale (assigned users) for a setlist.
  * @param {string} setlistId 
@@ -1092,16 +1112,7 @@ export async function getSetlistScale(setlistId) {
         return [];
     }
 
-    return data.map(item => ({
-        id: item.id,
-        role: item.role,
-        status: item.status || 'PENDING',
-        whatsappStatus: item.whatsapp_status || 'NOT_SENT',
-        confirmedAt: item.confirmed_at,
-        declinedAt: item.declined_at,
-        declineReason: item.decline_reason,
-        user: item.user
-    }));
+    return data.map(normalizeSetlistScaleItem);
 }
 
 // --- Notifications Helper ---
@@ -2771,7 +2782,7 @@ export async function getSetlists(playlistId) {
         song: songs(*)
     ),
         scales: setlist_scales(
-            id, role,
+            id, role, status, whatsapp_status, confirmed_at, declined_at, decline_reason,
             user: profiles(id, name, full_name, avatar_url, email, instrument, available_instruments)
         ),
             creator: profiles!setlists_created_by_profile_fkey(
@@ -2798,7 +2809,7 @@ export async function getSetlists(playlistId) {
                         song: songs(*)
                     ),
                     scales: setlist_scales(
-                        id, role,
+                        id, role, status, whatsapp_status, confirmed_at, declined_at, decline_reason,
                         user: profiles(id, name, full_name, avatar_url, email, instrument, available_instruments)
                     ),
                     creator: profiles!setlists_created_by_profile_fkey(
@@ -2826,6 +2837,7 @@ export async function getSetlists(playlistId) {
     // Process items order and normalize song data
     const result = data.map(s => ({
         ...s,
+        scales: s.scales?.map(normalizeSetlistScaleItem) || [],
         items: s.items?.sort((a, b) => a.position - b.position).map(item => {
             if (item.usage_type === 'media_block') {
                 return {
