@@ -112,6 +112,83 @@ class ArtistCatalogApiTestCase(unittest.TestCase):
                 "LouvorPlay-CifraImporter/1.0",
             )
 
+    def test_catalog_searches_hyphenated_slug_as_artist_name(self):
+        upstream_response = self.requests_get.return_value
+        upstream_response.json.side_effect = [
+            {
+                "artists": [
+                    {
+                        "id": 6996,
+                        "name": "Diante do Trono",
+                        "slug": "diante-do-trono",
+                    },
+                ]
+            },
+            {"songs": []},
+        ]
+
+        response = self.client.get("/api/artists/diante-do-trono/catalog")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            self.requests_get.call_args_list[0].kwargs["params"],
+            {"q": "diante do trono"},
+        )
+
+    def test_catalog_loads_all_upstream_pages(self):
+        suggest_response = MagicMock()
+        suggest_response.json.return_value = {
+            "artists": [
+                {"id": 6996, "name": "Diante do Trono", "slug": "diante-do-trono"},
+            ]
+        }
+        first_page = MagicMock()
+        first_page.json.return_value = {
+            "songs": [
+                {
+                    "artist_name": "Diante do Trono",
+                    "artist_slug": "diante-do-trono",
+                    "name": "A Primeira",
+                    "slug": "a-primeira",
+                },
+            ],
+            "page": 1,
+            "page_songs_count": 1,
+            "total_songs_count": 2,
+        }
+        second_page = MagicMock()
+        second_page.json.return_value = {
+            "songs": [
+                {
+                    "artist_name": "Diante do Trono",
+                    "artist_slug": "diante-do-trono",
+                    "name": "A Segunda",
+                    "slug": "a-segunda",
+                },
+            ],
+            "page": 2,
+            "page_songs_count": 1,
+            "total_songs_count": 2,
+        }
+        self.requests_get.side_effect = [suggest_response, first_page, second_page]
+
+        response = self.client.get("/api/artists/diante-do-trono/catalog")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json["total"], 2)
+        self.assertEqual(
+            [song["song_slug"] for song in response.json["songs"]],
+            ["a-primeira", "a-segunda"],
+        )
+        self.assertEqual(
+            self.requests_get.call_args_list[2].kwargs["params"],
+            {
+                "artist_ids": "6996",
+                "_sort": "pt_alphabetical",
+                "_page": 2,
+            },
+        )
+
     def test_catalog_rejects_when_upstream_has_no_exact_slug_match(self):
         self.requests_get.return_value.json.return_value = {
             "artists": [{"id": 10, "name": "Fernandinho", "slug": "fernandinho"}]

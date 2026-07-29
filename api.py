@@ -357,7 +357,7 @@ def _suggest_artists(query: str) -> list[dict]:
     return _sanitize_artist_candidates(response.json().get("artists", []))
 
 def _catalog_for_selected_artist(artist_slug: str) -> dict | None:
-    artists = _suggest_artists(artist_slug)
+    artists = _suggest_artists(artist_slug.replace("-", " "))
     selected_artist = next(
         (artist for artist in artists if artist["slug"] == artist_slug),
         None,
@@ -365,42 +365,69 @@ def _catalog_for_selected_artist(artist_slug: str) -> dict | None:
     if selected_artist is None:
         return None
 
-    songs_response = requests.get(
-        CIFRACLUB_ARTIST_SONGS_URL,
-        params={"artist_ids": str(selected_artist["id"]), "_sort": "pt_alphabetical"},
-        headers=IMPORTER_HEADERS,
-        timeout=10,
-    )
-    _raise_if_upstream_blocked(songs_response)
-    songs_response.raise_for_status()
-
     songs = []
     seen = set()
-    for song in songs_response.json().get("songs", []):
-        if not isinstance(song, dict):
-            continue
+    page = 1
+    loaded_song_count = 0
 
-        song_artist_slug = song.get("artist_slug")
-        song_slug = song.get("slug")
+    while True:
+        params = {
+            "artist_ids": str(selected_artist["id"]),
+            "_sort": "pt_alphabetical",
+        }
+        if page > 1:
+            params["_page"] = page
+
+        songs_response = requests.get(
+            CIFRACLUB_ARTIST_SONGS_URL,
+            params=params,
+            headers=IMPORTER_HEADERS,
+            timeout=10,
+        )
+        _raise_if_upstream_blocked(songs_response)
+        songs_response.raise_for_status()
+        payload = songs_response.json()
+        page_songs = payload.get("songs", [])
+        if not isinstance(page_songs, list):
+            page_songs = []
+
+        loaded_song_count += len(page_songs)
+        for song in page_songs:
+            if not isinstance(song, dict):
+                continue
+
+            song_artist_slug = song.get("artist_slug")
+            song_slug = song.get("slug")
+            if (
+                song_artist_slug != artist_slug
+                or not isinstance(song_slug, str)
+                or not _is_valid_slug(song_slug)
+            ):
+                continue
+
+            key = (song_artist_slug, song_slug)
+            if key in seen:
+                continue
+            seen.add(key)
+
+            songs.append({
+                "artist": song.get("artist_name") or _slug_to_name(song_artist_slug),
+                "name": song.get("name") or _slug_to_name(song_slug),
+                "artist_slug": song_artist_slug,
+                "song_slug": song_slug,
+                "url": f"{CIFRACLUB_BASE_URL}/{song_artist_slug}/{song_slug}",
+            })
+
+        total_song_count = payload.get("total_songs_count")
         if (
-            song_artist_slug != artist_slug
-            or not isinstance(song_slug, str)
-            or not _is_valid_slug(song_slug)
+            not page_songs
+            or isinstance(total_song_count, bool)
+            or not isinstance(total_song_count, int)
+            or loaded_song_count >= total_song_count
         ):
-            continue
+            break
 
-        key = (song_artist_slug, song_slug)
-        if key in seen:
-            continue
-        seen.add(key)
-
-        songs.append({
-            "artist": song.get("artist_name") or _slug_to_name(song_artist_slug),
-            "name": song.get("name") or _slug_to_name(song_slug),
-            "artist_slug": song_artist_slug,
-            "song_slug": song_slug,
-            "url": f"{CIFRACLUB_BASE_URL}/{song_artist_slug}/{song_slug}",
-        })
+        page += 1
 
     return {"artist": selected_artist, "songs": songs, "total": len(songs)}
 
