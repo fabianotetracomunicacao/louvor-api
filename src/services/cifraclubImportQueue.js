@@ -41,8 +41,10 @@ export async function previewArtistCatalog(artist) {
     if (
         !canonicalArtist
         || canonicalArtist.slug !== artist.slug
+        || !Array.isArray(payload.songs)
         || !Number.isInteger(payload.total)
         || payload.total < 0
+        || payload.total !== payload.songs.length
     ) {
         throw new Error('Artist catalog preview returned an invalid total');
     }
@@ -53,7 +55,36 @@ export async function previewArtistCatalog(artist) {
         name: canonicalArtist.name,
         slug: canonicalArtist.slug,
         total: payload.total,
+        songs: payload.songs,
     };
+}
+
+export async function enqueueArtistSelection(artist, selectedSongs) {
+    if (!Array.isArray(selectedSongs) || selectedSongs.length === 0) {
+        throw new TypeError('A seleção precisa conter pelo menos uma música');
+    }
+
+    const songs = selectedSongs.map((song) => {
+        if (
+            typeof song?.name !== 'string'
+            || !song.name.trim()
+            || typeof song?.song_slug !== 'string'
+            || !/^[a-z0-9-]+$/.test(song.song_slug)
+        ) {
+            throw new TypeError('A seleção contém uma música inválida');
+        }
+
+        return {
+            name: song.name.trim(),
+            song_slug: song.song_slug,
+        };
+    });
+
+    return callRpc('enqueue_selected_cifraclub_import', {
+        p_artist_name: artist.name,
+        p_artist_slug: artist.slug,
+        p_songs: songs,
+    });
 }
 
 export async function enqueueArtist(artist) {

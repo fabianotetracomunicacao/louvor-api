@@ -9,7 +9,7 @@ import {
 } from 'lucide-react';
 import {
     cancelImportJob,
-    enqueueArtist,
+    enqueueArtistSelection,
     listImportJobs,
     previewArtistCatalog,
     resumeImportJob,
@@ -17,6 +17,11 @@ import {
     searchArtists,
     subscribeToImportJobs,
 } from '../services/cifraclubImportQueue';
+import { ArtistCatalogSelector } from '../components/ArtistCatalogSelector';
+import {
+    getInitialCatalogSelection,
+    groupCatalogSongs,
+} from '../utils/cifraclubCatalog';
 
 const STATUS = {
     pending: { label: 'Na fila', className: 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300' },
@@ -130,6 +135,7 @@ export function AdminCifraclubImportPage() {
     const [query, setQuery] = useState('');
     const [artists, setArtists] = useState([]);
     const [selectedArtist, setSelectedArtist] = useState(null);
+    const [selectedSongSlugs, setSelectedSongSlugs] = useState(new Set());
     const [jobs, setJobs] = useState([]);
     const [isSearching, setIsSearching] = useState(false);
     const [previewingSlug, setPreviewingSlug] = useState(null);
@@ -184,6 +190,7 @@ export function AdminCifraclubImportPage() {
         setQuery(event.target.value);
         setArtists([]);
         setSelectedArtist(null);
+        setSelectedSongSlugs(new Set());
         setPreviewingSlug(null);
         setSearchError('');
         setIsSearching(false);
@@ -199,6 +206,7 @@ export function AdminCifraclubImportPage() {
         previewRequestId.current += 1;
         setSearchError('');
         setSelectedArtist(null);
+        setSelectedSongSlugs(new Set());
         setPreviewingSlug(null);
         setIsSearching(true);
 
@@ -222,6 +230,7 @@ export function AdminCifraclubImportPage() {
     const handleSelectArtist = async (artist) => {
         const requestId = ++previewRequestId.current;
         setSelectedArtist(null);
+        setSelectedSongSlugs(new Set());
         setPreviewingSlug(artist.slug);
         setSearchError('');
 
@@ -230,6 +239,9 @@ export function AdminCifraclubImportPage() {
             if (requestId !== previewRequestId.current) return;
 
             setSelectedArtist(previewedArtist);
+            setSelectedSongSlugs(
+                getInitialCatalogSelection(groupCatalogSongs(previewedArtist.songs)),
+            );
         } catch (error) {
             if (requestId !== previewRequestId.current) return;
 
@@ -244,12 +256,16 @@ export function AdminCifraclubImportPage() {
     const handleEnqueue = async () => {
         if (!selectedArtist) return;
 
+        const selectedSongs = selectedArtist.songs.filter((song) => (
+            selectedSongSlugs.has(song.song_slug)
+        ));
         setIsEnqueueing(true);
         setQueueError('');
 
         try {
-            await enqueueArtist(selectedArtist);
+            await enqueueArtistSelection(selectedArtist, selectedSongs);
             setSelectedArtist(null);
+            setSelectedSongSlugs(new Set());
             await refreshJobs();
         } catch (error) {
             setQueueError(getErrorMessage(error, 'Não foi possível adicionar o artista à fila.'));
@@ -334,15 +350,6 @@ export function AdminCifraclubImportPage() {
                         <Search size={17} aria-hidden="true" />
                         {isSearching ? 'Buscando' : 'Buscar'}
                     </button>
-                    <button
-                        type="button"
-                        onClick={handleEnqueue}
-                        disabled={!selectedArtist || isEnqueueing || previewingSlug !== null}
-                        className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-indigo-200 bg-indigo-50 px-3 text-sm font-semibold text-indigo-700 transition hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-indigo-900 dark:bg-indigo-950/40 dark:text-indigo-300 dark:hover:bg-indigo-950/70"
-                    >
-                        <ListMusic size={17} aria-hidden="true" />
-                        {isEnqueueing ? 'Adicionando' : 'Adicionar à fila'}
-                    </button>
                 </form>
 
                 {searchError && <p role="alert" className="mt-3 text-sm text-rose-600 dark:text-rose-400">{searchError}</p>}
@@ -383,6 +390,16 @@ export function AdminCifraclubImportPage() {
                     )}
                 </section>
             </section>
+
+            {selectedArtist && (
+                <ArtistCatalogSelector
+                    artist={selectedArtist}
+                    selectedSlugs={selectedSongSlugs}
+                    onSelectionChange={setSelectedSongSlugs}
+                    onEnqueue={handleEnqueue}
+                    isEnqueueing={isEnqueueing}
+                />
+            )}
 
             <section aria-label="Fila de importação" className="space-y-3">
                 <div className="flex items-center justify-between gap-3">

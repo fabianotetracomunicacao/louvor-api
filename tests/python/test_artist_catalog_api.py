@@ -57,18 +57,21 @@ class ArtistCatalogApiTestCase(unittest.TestCase):
                         "artist_slug": "fernando",
                         "name": "Canção",
                         "slug": "cancao",
+                        "provider": "cifraclub",
                     },
                     {
                         "artist_name": "Fernando",
                         "artist_slug": "fernando",
                         "name": "Canção",
                         "slug": "cancao",
+                        "provider": "cifraclub",
                     },
                     {
                         "artist_name": "Fernando",
                         "artist_slug": "fernando",
                         "name": "Outra",
                         "slug": "outra",
+                        "provider": "cifraclub",
                     },
                 ]
             },
@@ -88,6 +91,11 @@ class ArtistCatalogApiTestCase(unittest.TestCase):
                         "artist_slug": "fernando",
                         "song_slug": "cancao",
                         "url": "https://www.cifraclub.com.br/fernando/cancao",
+                        "provider": "cifraclub",
+                        "version_id": None,
+                        "version_label": None,
+                        "version_tone": None,
+                        "version_verified": False,
                     },
                     {
                         "artist": "Fernando",
@@ -95,6 +103,11 @@ class ArtistCatalogApiTestCase(unittest.TestCase):
                         "artist_slug": "fernando",
                         "song_slug": "outra",
                         "url": "https://www.cifraclub.com.br/fernando/outra",
+                        "provider": "cifraclub",
+                        "version_id": None,
+                        "version_label": None,
+                        "version_tone": None,
+                        "version_verified": False,
                     },
                 ],
                 "total": 2,
@@ -150,6 +163,7 @@ class ArtistCatalogApiTestCase(unittest.TestCase):
                     "artist_slug": "diante-do-trono",
                     "name": "A Primeira",
                     "slug": "a-primeira",
+                    "provider": "cifraclub",
                 },
             ],
             "page": 1,
@@ -164,6 +178,7 @@ class ArtistCatalogApiTestCase(unittest.TestCase):
                     "artist_slug": "diante-do-trono",
                     "name": "A Segunda",
                     "slug": "a-segunda",
+                    "provider": "cifraclub",
                 },
             ],
             "page": 2,
@@ -186,6 +201,62 @@ class ArtistCatalogApiTestCase(unittest.TestCase):
                 "artist_ids": "6996",
                 "_sort": "pt_alphabetical",
                 "_page": 2,
+            },
+        )
+
+    def test_catalog_filters_lyrics_only_entries_and_preserves_version_metadata(self):
+        upstream_response = self.requests_get.return_value
+        upstream_response.json.side_effect = [
+            {
+                "artists": [
+                    {
+                        "id": 6996,
+                        "name": "Diante do Trono",
+                        "slug": "diante-do-trono",
+                    },
+                ]
+            },
+            {
+                "songs": [
+                    {
+                        "artist_name": "Diante do Trono",
+                        "artist_slug": "diante-do-trono",
+                        "name": "Apenas Letra",
+                        "slug": "apenas-letra",
+                        "provider": "letras",
+                    },
+                    {
+                        "artist_name": "Diante do Trono",
+                        "artist_slug": "diante-do-trono",
+                        "name": "A Canção",
+                        "slug": "a-cancao",
+                        "provider": "cifraclub",
+                        "version_id": 123,
+                        "version_label": "principal",
+                        "version_tone": "G",
+                        "version_verified": True,
+                    },
+                ]
+            },
+        ]
+
+        response = self.client.get("/api/artists/diante-do-trono/catalog")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json["total"], 1)
+        self.assertEqual(
+            response.json["songs"][0],
+            {
+                "artist": "Diante do Trono",
+                "artist_slug": "diante-do-trono",
+                "name": "A Canção",
+                "song_slug": "a-cancao",
+                "url": "https://www.cifraclub.com.br/diante-do-trono/a-cancao",
+                "provider": "cifraclub",
+                "version_id": 123,
+                "version_label": "principal",
+                "version_tone": "G",
+                "version_verified": True,
             },
         )
 

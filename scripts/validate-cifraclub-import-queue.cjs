@@ -2,6 +2,10 @@ const fs = require('fs');
 
 const migrationPath = 'supabase/migrations/20260728170000_create_cifraclub_import_queue.sql';
 const sql = fs.readFileSync(migrationPath, 'utf8');
+const selectiveMigrationPath = 'supabase/migrations/20260729180000_enqueue_selected_cifraclub_import.sql';
+const selectiveSql = fs.existsSync(selectiveMigrationPath)
+  ? fs.readFileSync(selectiveMigrationPath, 'utf8')
+  : '';
 const dockerfile = fs.readFileSync('Dockerfile', 'utf8');
 const passenger = fs.readFileSync('passenger_wsgi.py', 'utf8');
 const apiSource = fs.readFileSync('api.py', 'utf8');
@@ -255,6 +259,46 @@ requirePattern(
 requirePattern(
   /p_estimated_total is null[\s\S]{0,200}raise exception 'invalid estimated total'/,
   'enqueue requires a catalog-preview total'
+);
+requireSourcePattern(
+  selectiveSql,
+  /create or replace function public\.enqueue_selected_cifraclub_import\(\s*p_artist_name text,\s*p_artist_slug text,\s*p_songs jsonb\s*\)/s,
+  'the selective catalog enqueue RPC'
+);
+requireSourcePattern(
+  selectiveSql,
+  /if not public\.is_super_admin\(\) then\s+raise exception 'forbidden';/s,
+  'selective enqueue restricted to super administrators'
+);
+requireSourcePattern(
+  selectiveSql,
+  /jsonb_typeof\(p_songs\) <> 'array'[\s\S]*jsonb_array_length\(p_songs\) = 0[\s\S]*jsonb_array_length\(p_songs\) > 5000/s,
+  'selective enqueue array validation and size limit'
+);
+requireSourcePattern(
+  selectiveSql,
+  /jsonb_to_recordset\(p_songs\)[\s\S]*as song\(name text, song_slug text\)/s,
+  'selected item extraction from JSON'
+);
+requireSourcePattern(
+  selectiveSql,
+  /insert into public\.cifraclub_import_items[\s\S]*on conflict \(job_id, song_slug\) do nothing/s,
+  'selected item insertion with slug deduplication'
+);
+requireSourcePattern(
+  selectiveSql,
+  /if inserted_count = 0 then\s+raise exception 'selection has no valid songs';/s,
+  'selective enqueue rejection when no valid songs remain'
+);
+requireSourcePattern(
+  selectiveSql,
+  /set total_count = inserted_count[\s\S]*status = 'processing'/s,
+  'selected job total based on persisted items'
+);
+requireSourcePattern(
+  selectiveSql,
+  /grant execute on function public\.enqueue_selected_cifraclub_import\(text, text, jsonb\)\s+to authenticated;/,
+  'authenticated access to the selective enqueue RPC'
 );
 
 requirePattern(
