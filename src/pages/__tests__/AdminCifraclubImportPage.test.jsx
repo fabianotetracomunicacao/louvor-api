@@ -6,6 +6,7 @@ const queue = vi.hoisted(() => ({
     searchArtists: vi.fn(),
     previewArtistCatalog: vi.fn(),
     enqueueArtist: vi.fn(),
+    enqueueArtistSelection: vi.fn(),
     listImportJobs: vi.fn(),
     cancelImportJob: vi.fn(),
     resumeImportJob: vi.fn(),
@@ -115,6 +116,30 @@ const jobs = [
     },
 ];
 
+const catalogSongs = [
+    {
+        name: 'Grande é o Senhor',
+        song_slug: 'grande-e-o-senhor-principal',
+        version_label: 'principal',
+        version_tone: 'G',
+        version_verified: false,
+    },
+    {
+        name: 'Grande E O Senhor',
+        song_slug: 'grande-e-o-senhor-verificada',
+        version_label: 'simplificada',
+        version_tone: 'A',
+        version_verified: true,
+    },
+    {
+        name: 'Único',
+        song_slug: 'unico',
+        version_label: 'principal',
+        version_tone: 'C',
+        version_verified: false,
+    },
+];
+
 function deferred() {
     let resolve;
     const promise = new Promise((resolvePromise) => {
@@ -135,9 +160,11 @@ describe('AdminCifraclubImportPage', () => {
             id: 10,
             name: 'Fernandinho',
             slug: 'fernandinho',
-            total: 154,
+            total: catalogSongs.length,
+            songs: catalogSongs,
         });
         queue.enqueueArtist.mockResolvedValue({ id: 'new-job' });
+        queue.enqueueArtistSelection.mockResolvedValue({ id: 'new-job' });
         queue.cancelImportJob.mockResolvedValue({ id: 'job-pending', status: 'cancelled' });
         queue.resumeImportJob.mockResolvedValue({ id: 'job-paused-limit', status: 'processing' });
         queue.retryImportFailures.mockResolvedValue({ id: 'job-errors', status: 'pending' });
@@ -148,13 +175,11 @@ describe('AdminCifraclubImportPage', () => {
         vi.useRealTimers();
     });
 
-    it('requires selecting an artist before enqueueing while search remains available during a queue', async () => {
+    it('shows the catalog selector and enqueues only the initially preferred versions', async () => {
         render(<AdminCifraclubImportPage />);
 
         const searchbox = screen.getByRole('searchbox', { name: /buscar artista/i });
-        const addButton = screen.getByRole('button', { name: /adicionar à fila/i });
-
-        expect(addButton).toBeDisabled();
+        expect(screen.queryByRole('button', { name: /adicionar .* à fila/i })).not.toBeInTheDocument();
 
         fireEvent.change(searchbox, { target: { value: 'Fernandinho' } });
         fireEvent.submit(screen.getByRole('search'));
@@ -166,18 +191,102 @@ describe('AdminCifraclubImportPage', () => {
             name: 'Fernandinho',
             slug: 'fernandinho',
         });
-        await screen.findByText('154 cifras');
-        fireEvent.click(addButton);
+        expect(await screen.findByRole('region', {
+            name: 'Selecionar cifras de Fernandinho',
+        })).toBeInTheDocument();
+        expect(screen.getByText('2 de 3 selecionadas')).toBeInTheDocument();
+        fireEvent.click(screen.getByRole('button', {
+            name: 'Adicionar 2 selecionadas à fila',
+        }));
 
         await waitFor(() => {
-            expect(queue.enqueueArtist).toHaveBeenCalledWith({
-                name: 'Fernandinho',
-                slug: 'fernandinho',
-                total: 154,
-                id: 10,
-            });
+            expect(queue.enqueueArtistSelection).toHaveBeenCalledWith(
+                {
+                    name: 'Fernandinho',
+                    slug: 'fernandinho',
+                    total: 3,
+                    id: 10,
+                    songs: catalogSongs,
+                },
+                [catalogSongs[1], catalogSongs[2]],
+            );
         });
         expect(searchbox).toBeEnabled();
+    });
+
+    it('preserves the current catalog selection when enqueueing fails', async () => {
+        queue.enqueueArtistSelection.mockRejectedValue(new Error('Fila indisponível'));
+        render(<AdminCifraclubImportPage />);
+
+        const searchbox = screen.getByRole('searchbox', { name: /buscar artista/i });
+        fireEvent.change(searchbox, { target: { value: 'Fernandinho' } });
+        fireEvent.submit(screen.getByRole('search'));
+        fireEvent.click(await screen.findByRole('option', { name: /fernandinho/i }));
+
+        await screen.findByText('2 de 3 selecionadas');
+        fireEvent.click(screen.getByRole('button', {
+            name: 'Mostrar versões de Grande é o Senhor',
+        }));
+        fireEvent.click(screen.getByRole('checkbox', {
+            name: /Grande é o Senhor.*principal.*tom G/i,
+        }));
+        fireEvent.click(screen.getByRole('button', {
+            name: 'Adicionar 3 selecionadas à fila',
+        }));
+
+        expect(await screen.findByRole('alert')).toHaveTextContent('Fila indisponível');
+        expect(screen.getByText('3 de 3 selecionadas')).toBeInTheDocument();
+    });
+
+    it('keeps the newest catalog when an earlier preview resolves last', async () => {
+        const fernandinhoPreview = deferred();
+        const oficinaPreview = deferred();
+        queue.searchArtists.mockResolvedValue([
+            { id: 10, name: 'Fernandinho', slug: 'fernandinho' },
+            { id: 11, name: 'Oficina G3', slug: 'oficina-g3' },
+        ]);
+        queue.previewArtistCatalog.mockImplementation((artist) => (
+            artist.slug === 'fernandinho'
+                ? fernandinhoPreview.promise
+                : oficinaPreview.promise
+        ));
+
+        render(<AdminCifraclubImportPage />);
+        const searchbox = screen.getByRole('searchbox', { name: /buscar artista/i });
+        fireEvent.change(searchbox, { target: { value: 'gospel' } });
+        fireEvent.submit(screen.getByRole('search'));
+
+        fireEvent.click(await screen.findByRole('option', { name: /fernandinho/i }));
+        fireEvent.click(screen.getByRole('option', { name: /oficina g3/i }));
+
+        await act(async () => {
+            oficinaPreview.resolve({
+                id: 11,
+                name: 'Oficina G3',
+                slug: 'oficina-g3',
+                total: 1,
+                songs: [{ name: 'Resposta', song_slug: 'resposta' }],
+            });
+        });
+        expect(await screen.findByRole('region', {
+            name: 'Selecionar cifras de Oficina G3',
+        })).toBeInTheDocument();
+
+        await act(async () => {
+            fernandinhoPreview.resolve({
+                id: 10,
+                name: 'Fernandinho',
+                slug: 'fernandinho',
+                total: 1,
+                songs: [{ name: 'Galileu', song_slug: 'galileu' }],
+            });
+        });
+        expect(screen.getByRole('region', {
+            name: 'Selecionar cifras de Oficina G3',
+        })).toBeInTheDocument();
+        expect(screen.queryByRole('region', {
+            name: 'Selecionar cifras de Fernandinho',
+        })).not.toBeInTheDocument();
     });
 
     it('shows progress, automatic and manual pauses, item errors, attempts, and last activity', async () => {
