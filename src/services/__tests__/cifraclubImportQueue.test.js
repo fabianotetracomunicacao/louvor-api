@@ -39,7 +39,7 @@ describe('cifraclub import queue client', () => {
         const artists = await searchArtists('Oficina G3');
 
         expect(fetch).toHaveBeenCalledWith(
-            expect.stringContaining('/artists/suggest?q=Oficina%20G3'),
+            'https://louvor-api-yt4e.onrender.com/api/artists/suggest?q=Oficina%20G3',
         );
         expect(artists).toEqual([{ id: 10, name: 'Oficina G3', slug: 'oficina-g3' }]);
     });

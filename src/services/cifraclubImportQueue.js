@@ -1,9 +1,8 @@
 import { supabase } from '../supabaseClient';
-
-const API_URL = import.meta.env.VITE_CIFRA_API_URL || 'https://louvor-api-yt4e.onrender.com/api';
+import { CIFRA_API_URL } from '../utils/cifraApi';
 
 function getApiUrl(path) {
-    return `${API_URL.replace(/\/$/, '')}${path}`;
+    return `${CIFRA_API_URL}${path}`;
 }
 
 async function callRpc(name, params) {

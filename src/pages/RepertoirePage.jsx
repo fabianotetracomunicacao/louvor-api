@@ -6,6 +6,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useNotification } from '../contexts/NotificationContext';
 import { useData } from '../contexts/DataContext';
 import { LiquidLoader } from '../components/LiquidLoader';
+import { CIFRA_API_URL } from '../utils/cifraApi';
 
 export function RepertoirePage() {
     const { isEditor, user, isAdmin } = useAuth();
@@ -66,8 +67,6 @@ export function RepertoirePage() {
     const [isSearchingExternal, setIsSearchingExternal] = useState(false);
     const [externalError, setExternalError] = useState(null);
 
-    const API_URL = import.meta.env.VITE_CIFRA_API_URL || 'https://louvor-api-yt4e.onrender.com/api';
-
     const toggleGroup = (groupId) => {
         setExpandedGroups(prev => {
             const newSet = new Set(prev);
@@ -90,7 +89,7 @@ export function RepertoirePage() {
             setExternalError(null);
 
             try {
-                const response = await fetch(`${API_URL}/search?q=${encodeURIComponent(filters.query)}`);
+                const response = await fetch(`${CIFRA_API_URL}/search?q=${encodeURIComponent(filters.query)}`);
                 if (!response.ok) throw new Error('Falha ao buscar cifras na internet');
                 
                 const data = await response.json();
@@ -117,7 +116,7 @@ export function RepertoirePage() {
     const handleImportExternal = async (item) => {
         setIsSearchingExternal(true);
         try {
-            const response = await fetch(`${API_URL}/artists/${item.artist_slug}/songs/${item.song_slug}`);
+            const response = await fetch(`${CIFRA_API_URL}/artists/${item.artist_slug}/songs/${item.song_slug}`);
             if (!response.ok) throw new Error('Falha ao obter detalhes da música');
             
             const data = await response.json();

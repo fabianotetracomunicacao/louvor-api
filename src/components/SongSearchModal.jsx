@@ -7,8 +7,7 @@ import { Portal } from './Portal';
 import { supabase } from '../supabaseClient';
 import { getSongBySlug } from '../utils/storage';
 import { parseImporter } from '../utils/importer';
-
-const API_URL = import.meta.env.VITE_CIFRA_API_URL || 'https://louvor-api-yt4e.onrender.com/api';
+import { CIFRA_API_URL } from '../utils/cifraApi';
 
 export function SongSearchModal({ isOpen, onClose, onImport }) {
     const [query, setQuery] = useState('');
@@ -46,7 +45,7 @@ export function SongSearchModal({ isOpen, onClose, onImport }) {
                 try {
                     // Gospel filtering is handled server-side by the API
                     const searchBoxQuery = query;
-                    const response = await fetch(`${API_URL}/search?q=${encodeURIComponent(searchBoxQuery)}`);
+                    const response = await fetch(`${CIFRA_API_URL}/search?q=${encodeURIComponent(searchBoxQuery)}`);
                     if (!response.ok) throw new Error('Falha ao buscar a cifra na internet');
                     const data = await response.json();
                     
@@ -88,7 +87,7 @@ export function SongSearchModal({ isOpen, onClose, onImport }) {
         setIsSearching(true); // Re-use loading state
         try {
             // Fetch dots/chords from API
-            const response = await fetch(`${API_URL}/artists/${item.artist_slug}/songs/${item.song_slug}`);
+            const response = await fetch(`${CIFRA_API_URL}/artists/${item.artist_slug}/songs/${item.song_slug}`);
             if (!response.ok) throw new Error('Falha ao obter detalhes da música');
             const data = await response.json();
 

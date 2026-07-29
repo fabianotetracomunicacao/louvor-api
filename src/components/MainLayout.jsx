@@ -10,6 +10,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { NotificationBell } from './NotificationBell';
 import { OfflineIndicator } from './OfflineIndicator';
 import { useNotification } from '../contexts/NotificationContext';
+import { CIFRA_API_URL } from '../utils/cifraApi';
 
 export function MainLayout() {
     const {
@@ -88,8 +89,6 @@ export function MainLayout() {
     const [isSearchingExternal, setIsSearchingExternal] = useState(false);
     const [searchError, setSearchError] = useState(null);
 
-    const API_URL = import.meta.env.VITE_CIFRA_API_URL || 'http://localhost:3000';
-
     // Debounced Search Effect
     useEffect(() => {
         const timer = setTimeout(() => {
@@ -118,7 +117,7 @@ export function MainLayout() {
     const searchExternal = async (query) => {
         setIsSearchingExternal(true);
         try {
-            const response = await fetch(`${API_URL}/search?q=${encodeURIComponent(query)}`);
+            const response = await fetch(`${CIFRA_API_URL}/search?q=${encodeURIComponent(query)}`);
             if (!response.ok) throw new Error();
             const data = await response.json();
 
@@ -164,7 +163,7 @@ export function MainLayout() {
                 return;
             }
 
-            const response = await fetch(`${API_URL}/artists/${item.artist_slug}/songs/${item.song_slug}`);
+            const response = await fetch(`${CIFRA_API_URL}/artists/${item.artist_slug}/songs/${item.song_slug}`);
             if (!response.ok) throw new Error('Falha ao obter detalhes');
             const data = await response.json();
 
