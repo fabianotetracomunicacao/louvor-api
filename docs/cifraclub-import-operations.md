@@ -120,10 +120,26 @@ duplicatas e nao devem ser reenviados.
 ## Pausa e retomada operacional
 
 Um bloqueio upstream pausa automaticamente o trabalho. Para interromper um
-trabalho manualmente, use o SQL Editor com acesso administrativo e registre o
-motivo no ticket operacional:
+trabalho manualmente, execute o bloco inteiro no SQL Editor como administrador
+do banco. Nao o execute pelo cliente da aplicacao: a RLS bloqueia escrita
+direta e a transacao precisa manter a ordem abaixo. Registre o motivo no ticket
+operacional.
 
 ```sql
+begin;
+
+-- Invalida primeiro a reivindicacao do item. Um worker que ainda tiver o
+-- token antigo falhara na validacao de fencing ao tentar finalizar ou importar.
+update public.cifraclub_import_items
+set
+  status = 'pending',
+  lease_until = null,
+  claim_token = null,
+  updated_at = now()
+where job_id = '<job-id>'
+  and status = 'processing';
+
+-- So depois de liberar o item, pausa o job e remove seu lease de descoberta.
 update public.cifraclub_import_jobs
 set
   status = 'paused',
@@ -134,7 +150,14 @@ set
   updated_at = now()
 where id = '<job-id>'
   and status in ('pending', 'discovering', 'processing');
+
+commit;
 ```
+
+A ordem e parte do procedimento: nao pause somente o job e nao separe essas
+atualizacoes em comandos independentes. Se houver um worker obsoleto, o
+`claim_token` e o `lease_until` limpos no item fazem as RPCs de finalizacao e
+importacao rejeitarem a reivindicacao antiga.
 
 Nao retome automaticamente um trabalho pausado por bloqueio. Primeiro confirme
 que a causa foi resolvida e que retomar esta de acordo com os limites do
