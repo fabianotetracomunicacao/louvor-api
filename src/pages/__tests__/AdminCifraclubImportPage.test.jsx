@@ -137,6 +137,7 @@ describe('AdminCifraclubImportPage', () => {
         const pausedJob = screen.getByRole('heading', { name: 'Gabriela Rocha' }).closest('article');
         expect(within(pausedJob).getByText('4 de 20')).toBeInTheDocument();
         expect(within(pausedJob).getByText(/Próxima tentativa: 30\/07\/2026/)).toBeInTheDocument();
+        expect(within(pausedJob).queryByText(/^Ordem/)).not.toBeInTheDocument();
     });
 
     it('keeps the latest artist results when earlier searches resolve last', async () => {
@@ -214,10 +215,10 @@ describe('AdminCifraclubImportPage', () => {
         await screen.findByRole('heading', { name: 'Fernandinho' });
         expect(screen.getAllByRole('heading', { level: 3 }).map((heading) => heading.textContent)).toEqual([
             'Fernandinho',
-            'Gabriela Rocha',
             'Gabriel Guedes',
             'Aline Barros',
             'Diante do Trono',
+            'Gabriela Rocha',
         ]);
     });
 

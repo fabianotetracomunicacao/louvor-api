@@ -26,7 +26,7 @@ const STATUS = {
     cancelled: { label: 'Cancelada', className: 'bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-300' },
 };
 
-const QUEUE_STATUSES = new Set(['pending', 'discovering', 'processing', 'paused']);
+const QUEUE_STATUSES = new Set(['pending', 'discovering', 'processing']);
 
 function getErrorMessage(error, fallback) {
     return error instanceof Error && error.message ? error.message : fallback;
