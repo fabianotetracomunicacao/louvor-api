@@ -1,5 +1,6 @@
 """CifraClub Module"""
 
+import json
 import logging
 import re
 from curl_cffi import requests
@@ -29,6 +30,57 @@ class CifraClub():
     def __init__(self):
         # No driver needed for shared hosting
         pass
+
+    def _extract_structured_metadata(
+        self,
+        soup: BeautifulSoup,
+    ) -> tuple[str, str]:
+        """Extrai título e artista dos metadados schema.org."""
+        title = ""
+        artist = ""
+        breadcrumbs = {}
+
+        for script in soup.select('script[type="application/ld+json"]'):
+            try:
+                payload = json.loads(script.get_text(strip=True))
+            except (TypeError, ValueError):
+                continue
+
+            entries = payload if isinstance(payload, list) else [payload]
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    continue
+
+                entry_types = entry.get("@type", [])
+                if isinstance(entry_types, str):
+                    entry_types = [entry_types]
+
+                if "MusicRecording" in entry_types:
+                    by_artist = entry.get("byArtist")
+                    if isinstance(by_artist, list):
+                        by_artist = next(
+                            (
+                                item for item in by_artist
+                                if isinstance(item, dict) and item.get("name")
+                            ),
+                            None,
+                        )
+                    if isinstance(by_artist, dict):
+                        artist = str(by_artist.get("name", "")).strip() or artist
+
+                if "MusicComposition" in entry_types:
+                    title = str(entry.get("name", "")).strip() or title
+
+                if "BreadcrumbList" in entry_types:
+                    for item in entry.get("itemListElement", []):
+                        if not isinstance(item, dict):
+                            continue
+                        position = item.get("position")
+                        name = str(item.get("name", "")).strip()
+                        if isinstance(position, int) and name:
+                            breadcrumbs[position] = name
+
+        return title or breadcrumbs.get(3, ""), artist or breadcrumbs.get(2, "")
 
     def _extract_youtube_url(self, soup: BeautifulSoup) -> str:
         """Extrai URL do YouTube da página."""
@@ -63,8 +115,11 @@ class CifraClub():
 
         soup = BeautifulSoup(response_body, "html.parser")
 
+        structured_title, structured_artist = self._extract_structured_metadata(
+            soup,
+        )
         title_elem = soup.select_one("h1.t1") or soup.find("h1")
-        artist_elem = soup.select_one("h2.t3") or soup.find("h2")
+        artist_elem = soup.select_one("h2.t3")
         pre_elem = soup.select_one("div.cifra_cnt pre") or soup.find("pre")
         
         # --- NOVA LÓGICA DE ESTILO ---
@@ -81,8 +136,12 @@ class CifraClub():
                 result["upstream_body"] = response_body[:500]
             return False
 
-        title = title_elem.get_text(strip=True) if title_elem else ""
-        artist = artist_elem.get_text(strip=True) if artist_elem else ""
+        title = structured_title or (
+            title_elem.get_text(strip=True) if title_elem else ""
+        )
+        artist = structured_artist or (
+            artist_elem.get_text(strip=True) if artist_elem else ""
+        )
         if not title or not artist:
             result["error"] = "Metadados canônicos ausentes na página da cifra"
             result["error_code"] = "missing_canonical_metadata"

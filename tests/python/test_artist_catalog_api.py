@@ -363,6 +363,40 @@ class CifraClubHttpIdentityTestCase(unittest.TestCase):
         )
 
     @patch("cifraclub.requests.get")
+    def test_detail_prefers_structured_artist_over_navigation_heading(
+        self,
+        requests_get,
+    ):
+        requests_get.return_value = MagicMock(
+            status_code=200,
+            text=(
+                "<h2 class='u-srOnly'>Menu principal</h2>"
+                "<script type='application/ld+json'>"
+                '{"@context":"https://schema.org",'
+                '"@type":["MusicRecording","Article"],'
+                '"name":"Oficina G3 - A Deus",'
+                '"byArtist":{"@type":"MusicGroup","name":"Oficina G3"}}'
+                "</script>"
+                "<script type='application/ld+json'>"
+                '{"@context":"https://schema.org",'
+                '"@type":"MusicComposition","name":"A Deus"}'
+                "</script>"
+                "<h1>A Deus</h1><h2>Oficina G3</h2>"
+                "<div class='cifra_cnt'><pre>G\\nLetra</pre></div>"
+            ),
+        )
+        result = {}
+
+        extracted = cifraclub.CifraClub()._extract_with_requests(
+            "https://www.cifraclub.com.br/oficina-g3/a-deus",
+            result,
+        )
+
+        self.assertTrue(extracted)
+        self.assertEqual(result["name"], "A Deus")
+        self.assertEqual(result["artist"], "Oficina G3")
+
+    @patch("cifraclub.requests.get")
     def test_detail_preserves_upstream_forbidden_and_rate_limit(self, requests_get):
         for status in (403, 429):
             with self.subTest(status=status):
