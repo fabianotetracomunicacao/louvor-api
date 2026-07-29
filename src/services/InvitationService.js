@@ -127,6 +127,22 @@ export const InvitationService = {
         });
 
         if (emailError) {
+            const isRateLimit = emailError.status === 429 ||
+                emailError.message?.toLowerCase().includes('rate limit') ||
+                emailError.message?.toLowerCase().includes('security purposes') ||
+                emailError.message?.toLowerCase().includes('too many requests') ||
+                emailError.message?.includes('429');
+
+            if (isRateLimit) {
+                // Preserve the pending invitation so it can be shared via link/WhatsApp
+                const link = getAuthRedirectUrl(`/join/${data.token}`);
+                const customErr = new Error('Limite de envio de e-mails atingido (429). O convite foi criado com sucesso! Você pode copiar o link do convite e enviar pelo WhatsApp.');
+                customErr.isRateLimit = true;
+                customErr.invitationLink = link;
+                customErr.invitation = data;
+                throw customErr;
+            }
+
             await supabase
                 .from('invitations')
                 .update({ status: 'canceled' })

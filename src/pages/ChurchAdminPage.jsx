@@ -6,7 +6,8 @@ import { useNotification } from '../contexts/NotificationContext';
 import { 
     Users, UserPlus, Mail, Shield, AlertCircle, 
     CheckCircle, XCircle, Clock, Trash2, Settings, 
-    Activity, ArrowUpRight, Plus, RefreshCw, Loader, CreditCard
+    Activity, ArrowUpRight, Plus, RefreshCw, Loader, CreditCard,
+    Copy, Link as LinkIcon
 } from 'lucide-react';
 
 export function ChurchAdminPage() {
@@ -33,36 +34,44 @@ export function ChurchAdminPage() {
         }
     }, [activeChurch]);
 
-    const loadAll = async () => {
+    const loadAll = () => {
         setLoading(true);
-        try {
-            await Promise.all([
-                loadMembers(),
-                loadInvitations(),
-                updateCapacityState()
-            ]);
-        } catch (err) {
-            console.error(err);
-            showToast('Erro ao carregar dados da igreja.', 'error');
-        } finally {
-            setLoading(false);
-        }
+        Promise.all([
+            loadMembers(),
+            loadInvitations(),
+            updateCapacityState()
+        ]).finally(() => setLoading(false));
     };
 
     const loadMembers = async () => {
         const { data, error } = await supabase
             .from('church_user_memberships')
-            .select('*, profile: profiles!church_user_memberships_user_id_fkey(*)')
+            .select(`
+                id,
+                role,
+                status,
+                created_at,
+                user_id,
+                profile: profiles(*)
+            `)
             .eq('church_id', activeChurch.id)
-            .order('role', { ascending: true });
+            .eq('status', 'active');
 
-        if (error) throw error;
-        setMembers(data);
+        if (error) {
+            console.error('Error loading members:', error);
+            showToast('Erro ao carregar membros.', 'error');
+        } else {
+            setMembers(data || []);
+        }
     };
 
     const loadInvitations = async () => {
-        const data = await InvitationService.listInvitations(activeChurch.id);
-        setInvitations(data);
+        try {
+            const data = await InvitationService.listInvitations(activeChurch.id);
+            setInvitations(data || []);
+        } catch (err) {
+            console.error('Error loading invitations:', err);
+        }
     };
 
     const updateCapacityState = async () => {
@@ -75,6 +84,12 @@ export function ChurchAdminPage() {
             leader: { occupied: leaderCap.totalOccupied, limit: leaderCap.limit },
             worshiper: { occupied: worshiperCap.totalOccupied, limit: worshiperCap.limit }
         });
+    };
+
+    const handleCopyInviteLink = (token) => {
+        const link = `${window.location.origin}/join/${token}`;
+        navigator.clipboard.writeText(link);
+        showToast('Link do convite copiado para a área de transferência!', 'success');
     };
 
     const handleSendInvite = async (e) => {
@@ -93,7 +108,18 @@ export function ChurchAdminPage() {
             loadInvitations();
             updateCapacityState();
         } catch (err) {
-            showToast(err.message, 'error');
+            if (err.isRateLimit) {
+                showToast('Convite criado! Copie o link do convite na lista ao lado.', 'info');
+                if (err.invitationLink) {
+                    navigator.clipboard.writeText(err.invitationLink).catch(() => {});
+                }
+                setInviteEmail('');
+                setIsInviting(false);
+                loadInvitations();
+                updateCapacityState();
+            } else {
+                showToast(err.message, 'error');
+            }
         } finally {
             setSendingInvite(false);
         }
@@ -372,7 +398,13 @@ export function ChurchAdminPage() {
                                         <span className="text-[9px] text-slate-400 flex items-center gap-1">
                                             <Clock size={10} /> Expira em 7 dias
                                         </span>
-                                        <button className="text-[10px] font-bold text-purple-600 hover:text-purple-700 uppercase tracking-tighter">Reenviar</button>
+                                        <button 
+                                            onClick={() => handleCopyInviteLink(invite.token)}
+                                            className="text-[10px] font-bold text-purple-600 hover:text-purple-700 uppercase tracking-tighter flex items-center gap-1 bg-purple-50 dark:bg-purple-900/30 px-2 py-1 rounded-lg transition hover:scale-105"
+                                            title="Copiar Link do Convite"
+                                        >
+                                            <Copy size={11} /> Copiar Link
+                                        </button>
                                     </div>
                                 </div>
                             ))}
