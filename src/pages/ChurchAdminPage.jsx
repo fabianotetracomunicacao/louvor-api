@@ -53,7 +53,7 @@ export function ChurchAdminPage() {
                 status,
                 created_at,
                 user_id,
-                profile: profiles(*)
+                profile: profiles!church_user_memberships_user_id_fkey(*)
             `)
             .eq('church_id', activeChurch.id)
             .eq('status', 'active');
