@@ -8,6 +8,7 @@ import re
 import unicodedata
 import time
 from curl_cffi import requests
+from curl_cffi.requests.exceptions import RequestException
 from bs4 import BeautifulSoup
 from flask import Flask, send_from_directory, jsonify, request
 from flask_cors import CORS
@@ -28,14 +29,41 @@ CIFRACLUB_ARTISTS_SUGGEST_URL = "https://solr.sscdn.co/cifraclub-explore/v1/arti
 CIFRACLUB_ARTIST_SONGS_URL = "https://solr.sscdn.co/cifraclub-explore/v1/songs"
 SEARCH_RESULTS_PER_PAGE = 15
 DEFAULT_HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/131.0.0.0 Safari/537.36"
-    ),
-    "Origin": CIFRACLUB_BASE_URL,
-    "Referer": f"{CIFRACLUB_BASE_URL}/",
+    "User-Agent": "LouvorPlay-CifraImporter/1.0",
+    "Accept": "application/json,text/html;q=0.9,*/*;q=0.8",
 }
+IMPORTER_HEADERS = {
+    "User-Agent": "LouvorPlay-CifraImporter/1.0",
+    "Accept": "application/json",
+}
+BLOCKED_BODY_PATTERN = re.compile(
+    r"\b(captcha|challenge|access denied|forbidden|too many requests|cloudflare)\b",
+    re.IGNORECASE,
+)
+SLUG_PATTERN = re.compile(r"[a-z0-9-]+")
+
+
+class UpstreamBlockedError(Exception):
+    def __init__(self, response):
+        self.status_code = getattr(response, "status_code", None)
+        body = getattr(response, "text", "")
+        self.body = body[:500] if isinstance(body, str) else ""
+        super().__init__(f"Upstream blocked request with status {self.status_code}")
+
+
+def _raise_if_upstream_blocked(response):
+    status = getattr(response, "status_code", None)
+    body = getattr(response, "text", "")
+    body = body if isinstance(body, str) else ""
+    looks_like_html = body.lstrip().lower().startswith(("<!doctype", "<html", "<body"))
+    if status in {403, 429} or (
+        looks_like_html and BLOCKED_BODY_PATTERN.search(body)
+    ):
+        raise UpstreamBlockedError(response)
+
+
+def _is_valid_slug(value: str) -> bool:
+    return bool(SLUG_PATTERN.fullmatch(value))
 
 # Gospel genre keywords for matching
 GOSPEL_KEYWORDS = {"gospel", "religioso", "gospel/religioso", "crist\u00e3", "cristao", "worship"}
@@ -53,7 +81,7 @@ def _is_gospel_artist(artist_slug: str) -> bool:
 
     try:
         url = f"{CIFRACLUB_BASE_URL}/{artist_slug}/"
-        resp = requests.get(url, impersonate="chrome110", headers=DEFAULT_HEADERS, timeout=8)
+        resp = requests.get(url, headers=DEFAULT_HEADERS, timeout=8)
         resp.raise_for_status()
         soup = BeautifulSoup(resp.text, "html.parser")
 
@@ -138,7 +166,6 @@ def _search_from_solr(query: str, limit: int | None = None):
     """Busca m\u00fasicas usando o endpoint de sugest\u00f5es do Cifra Club."""
     response = requests.get(
         CIFRACLUB_SOLR_SUGGEST_URL,
-        impersonate="chrome110",
         params={"q": query},
         headers=DEFAULT_HEADERS,
         timeout=10,
@@ -187,7 +214,6 @@ def _search_from_solr_alt(query: str, limit: int | None = None):
     """Busca m\u00fasicas usando endpoint alternativo de sugest\u00e3o."""
     response = requests.get(
         CIFRACLUB_SOLR_ALT_SUGGEST_URL,
-        impersonate="chrome110",
         params={"q": query},
         headers=DEFAULT_HEADERS,
         timeout=10,
@@ -231,7 +257,6 @@ def _search_from_artist_catalog(query: str, limit: int | None = None):
     """Busca cat\u00e1logo do artista quando a query representa claramente um artista."""
     response = requests.get(
         CIFRACLUB_ARTISTS_SUGGEST_URL,
-        impersonate="chrome110",
         params={"q": query},
         headers=DEFAULT_HEADERS,
         timeout=10,
@@ -257,7 +282,6 @@ def _search_from_artist_catalog(query: str, limit: int | None = None):
 
     songs_response = requests.get(
         CIFRACLUB_ARTIST_SONGS_URL,
-        impersonate="chrome110",
         params={"artist_ids": str(artist_id), "_sort": "pt_alphabetical"},
         headers=DEFAULT_HEADERS,
         timeout=10,
@@ -292,11 +316,156 @@ def _search_from_artist_catalog(query: str, limit: int | None = None):
 
     return results
 
+def _sanitize_artist_candidates(artists: list) -> list[dict]:
+    """Return usable, unique artist candidates from the suggest response."""
+    candidates = []
+    seen_slugs = set()
+
+    for artist in artists:
+        if not isinstance(artist, dict):
+            continue
+
+        artist_id = artist.get("id")
+        name = artist.get("name")
+        slug = artist.get("slug")
+        if (
+            isinstance(artist_id, bool)
+            or not isinstance(artist_id, (int, str))
+            or not str(artist_id).strip()
+            or not isinstance(name, str)
+            or not name.strip()
+            or not isinstance(slug, str)
+            or not _is_valid_slug(slug)
+            or slug in seen_slugs
+        ):
+            continue
+
+        seen_slugs.add(slug)
+        candidates.append({"id": artist_id, "name": name, "slug": slug})
+
+    return candidates
+
+def _suggest_artists(query: str) -> list[dict]:
+    response = requests.get(
+        CIFRACLUB_ARTISTS_SUGGEST_URL,
+        params={"q": query},
+        headers=IMPORTER_HEADERS,
+        timeout=10,
+    )
+    _raise_if_upstream_blocked(response)
+    response.raise_for_status()
+    return _sanitize_artist_candidates(response.json().get("artists", []))
+
+def _catalog_for_selected_artist(artist_slug: str) -> dict | None:
+    artists = _suggest_artists(artist_slug)
+    selected_artist = next(
+        (artist for artist in artists if artist["slug"] == artist_slug),
+        None,
+    )
+    if selected_artist is None:
+        return None
+
+    songs_response = requests.get(
+        CIFRACLUB_ARTIST_SONGS_URL,
+        params={"artist_ids": str(selected_artist["id"]), "_sort": "pt_alphabetical"},
+        headers=IMPORTER_HEADERS,
+        timeout=10,
+    )
+    _raise_if_upstream_blocked(songs_response)
+    songs_response.raise_for_status()
+
+    songs = []
+    seen = set()
+    for song in songs_response.json().get("songs", []):
+        if not isinstance(song, dict):
+            continue
+
+        song_artist_slug = song.get("artist_slug")
+        song_slug = song.get("slug")
+        if (
+            song_artist_slug != artist_slug
+            or not isinstance(song_slug, str)
+            or not _is_valid_slug(song_slug)
+        ):
+            continue
+
+        key = (song_artist_slug, song_slug)
+        if key in seen:
+            continue
+        seen.add(key)
+
+        songs.append({
+            "artist": song.get("artist_name") or _slug_to_name(song_artist_slug),
+            "name": song.get("name") or _slug_to_name(song_slug),
+            "artist_slug": song_artist_slug,
+            "song_slug": song_slug,
+            "url": f"{CIFRACLUB_BASE_URL}/{song_artist_slug}/{song_slug}",
+        })
+
+    return {"artist": selected_artist, "songs": songs, "total": len(songs)}
+
+@app.get("/api/artists/suggest")
+def artist_suggest():
+    query = request.args.get("q", "").strip()
+    if not query:
+        return jsonify({"error": 'Query parameter "q" is required'}), 400
+
+    try:
+        return jsonify({"artists": _suggest_artists(query)})
+    except UpstreamBlockedError as error:
+        status = error.status_code if error.status_code in {403, 429} else 403
+        return jsonify({
+            "error": "Artist suggestion blocked by upstream",
+            "blocked": True,
+            "upstream_status": error.status_code,
+            "upstream_body": error.body,
+        }), status
+    except RequestException as error:
+        logger.error(f"Artist suggestion request failed: {error}")
+        upstream_status = getattr(getattr(error, "response", None), "status_code", None)
+        status = upstream_status if upstream_status in {403, 429} else 502
+        return jsonify({
+            "error": "Artist suggestion upstream request failed",
+            "upstream_status": upstream_status,
+        }), status
+
+@app.get("/api/artists/<artist_slug>/catalog")
+def artist_catalog(artist_slug):
+    if not _is_valid_slug(artist_slug):
+        return jsonify({"error": "Invalid artist slug"}), 400
+
+    try:
+        catalog = _catalog_for_selected_artist(artist_slug)
+    except UpstreamBlockedError as error:
+        status = error.status_code if error.status_code in {403, 429} else 403
+        return jsonify({
+            "error": "Artist catalog blocked by upstream",
+            "blocked": True,
+            "upstream_status": error.status_code,
+            "upstream_body": error.body,
+        }), status
+    except RequestException as error:
+        logger.error(f"Artist catalog request failed for {artist_slug}: {error}")
+        upstream_response = getattr(error, "response", None)
+        upstream_status = getattr(upstream_response, "status_code", None)
+        upstream_body = getattr(upstream_response, "text", "") or ""
+        status = upstream_status if upstream_status in {403, 429} else 502
+        return jsonify({
+            "error": "Artist catalog upstream request failed",
+            "blocked": upstream_status in {403, 429},
+            "upstream_status": upstream_status,
+            "upstream_body": upstream_body[:500],
+        }), status
+
+    if catalog is None:
+        return jsonify({"error": "Artist not found"}), 404
+
+    return jsonify(catalog)
+
 def _search_from_html(query: str, limit: int = 20):
     """Fallback usando parsing de HTML para quando o endpoint de sugest\u00f5es falhar."""
     response = requests.get(
         CIFRACLUB_SEARCH_URL,
-        impersonate="chrome110",
         params={"q": query},
         headers=DEFAULT_HEADERS,
         timeout=10,
@@ -441,16 +610,20 @@ def search():
     except json.JSONDecodeError as e:
         logger.error(f"Error decoding SOLR response: {e}")
         return jsonify({'error': 'Search failed: invalid upstream response'}), 502
-    except requests.RequestException as e:
+    except RequestException as e:
         logger.error(f"Error searching upstream service: {e}")
         return jsonify({'error': f'Search failed: upstream request error ({str(e)})'}), 502
     except Exception as e:
         logger.error(f"Error searching: {e}")
         return jsonify({'error': f'Search failed: {str(e)}'}), 500
 
+@app.route('/api/artists/<artist>/songs/<song>')
 @app.route('/artists/<artist>/songs/<song>')
 def get_cifra(artist, song):
     """Get cifra by artist and song"""
+    if not (_is_valid_slug(artist) and _is_valid_slug(song)):
+        return jsonify({"error": "Invalid artist or song slug"}), 400
+
     logger.info(f"Requisi\u00e7\u00e3o recebida: artist={artist}, song={song}")
     try:
         cifraclub = CifraClub()
@@ -458,7 +631,17 @@ def get_cifra(artist, song):
         
         if 'error' in result:
             logger.error(f"Erro ao obter cifra: {result['error']}")
-            return jsonify(result), 500
+            upstream_status = result.get("upstream_status")
+            status = (
+                upstream_status
+                if upstream_status in {403, 429}
+                else 403
+                if result.get("blocked")
+                else 422
+                if result.get("error_code") == "missing_canonical_metadata"
+                else 500
+            )
+            return jsonify(result), status
         
         logger.info(f"Cifra obtida com sucesso: {result.get('name', 'Unknown')}")
         return jsonify(result)

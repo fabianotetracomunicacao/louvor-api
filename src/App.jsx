@@ -36,6 +36,7 @@ import { UpdatePasswordPage } from './pages/UpdatePasswordPage';
 import { LandingPage } from './pages/LandingPage';
 import { VisualEditorPage } from './pages/VisualEditorPage';
 import { AdminDiagnosticsPage } from './pages/AdminDiagnosticsPage';
+import { AdminCifraclubImportPage } from './pages/AdminCifraclubImportPage';
 
 import { LiveSessionProvider } from './contexts/LiveSessionContext';
 import { MaintenanceGuard } from './components/MaintenanceGuard';
@@ -87,6 +88,7 @@ function App() {
 
                     {/* Admin Routes */}
                     <Route path="/admin/diagnostics" element={<SuperAdminRoute><AdminDiagnosticsPage /></SuperAdminRoute>} />
+                    <Route path="/admin/cifraclub-imports" element={<SuperAdminRoute><AdminCifraclubImportPage /></SuperAdminRoute>} />
                     <Route path="/admin/users" element={<AdminRoute><AdminUsersPage /></AdminRoute>} />
                     <Route path="/admin/churches" element={<SuperAdminRoute><SuperAdminChurchesPage /></SuperAdminRoute>} />
                     <Route path="/admin/plans" element={<SuperAdminRoute><SuperAdminPlansPage /></SuperAdminRoute>} />
